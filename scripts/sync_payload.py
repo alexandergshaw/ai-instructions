@@ -27,7 +27,7 @@ def _resolve_managed_path(relative_path: Path, repo_root: Path) -> Path:
 
     current = destination
     while current != repo_root:
-        if current.exists() and current.is_symlink():
+        if current.is_symlink():
             raise SyncError(f"Refusing to operate on symlinked managed path: {current}")
         current = current.parent
 
@@ -43,7 +43,8 @@ def load_previous_manifest(repo_root: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise SyncError("Existing manifest must contain a JSON object.")
 
-    if data.get("source") != MANIFEST_SOURCE:
+    source = data.get("source")
+    if source is not None and source != MANIFEST_SOURCE:
         return {"files": []}
 
     files = data.get("files", [])
@@ -85,6 +86,10 @@ def remove_stale_files(previous_files: list[str], current_files: list[Path], rep
             continue
 
         destination = _resolve_managed_path(Path(relative_name), repo_root)
+        if destination.is_symlink():
+            destination.unlink()
+            remove_empty_parents(destination, managed_root)
+            continue
         if destination.exists() and destination.is_file():
             destination.unlink()
             remove_empty_parents(destination, managed_root)

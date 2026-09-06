@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
 from sync_payload import sync_payload
 
 REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -86,6 +87,9 @@ def validate_repo_name(repo: str) -> None:
 
 def load_targets(config_path: Path) -> list[Target]:
     data = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise PublishError("config/targets.json must contain a JSON object.")
+
     raw_targets = data.get("targets")
     if not isinstance(raw_targets, list):
         raise PublishError("config/targets.json must contain a 'targets' array.")
@@ -114,7 +118,7 @@ def load_targets(config_path: Path) -> list[Target]:
         if languages is not None and (
             not isinstance(languages, list) or not all(isinstance(language, str) for language in languages)
         ):
-            raise PublishError(f"Target {repo} has a non-string languages entry.")
+            raise PublishError(f"Target {repo} languages must be an array of strings when present.")
 
         targets.append(
             Target(
@@ -154,7 +158,13 @@ def remote_branch_exists(repo_root: Path, branch_name: str, env: dict[str, str])
         text=True,
         capture_output=True,
     )
-    return result.returncode == 0
+    if result.returncode == 0:
+        return True
+    if result.returncode == 2:
+        return False
+
+    details = result.stderr.strip() or result.stdout.strip() or "git ls-remote failed"
+    raise PublishError(f"Failed to inspect remote branch {branch_name}: {details}")
 
 
 def configure_git_identity(repo_root: Path, bot_name: str, bot_email: str, env: dict[str, str]) -> None:
@@ -167,19 +177,20 @@ def repository_has_changes(repo_root: Path, env: dict[str, str]) -> bool:
     return bool(status)
 
 
-def checkout_branch(repo_root: Path, branch_name: str, default_branch: str, env: dict[str, str]) -> None:
+def checkout_branch(repo_root: Path, branch_name: str, default_branch: str, env: dict[str, str]) -> bool:
     if remote_branch_exists(repo_root, branch_name, env):
         remote_ref = branch_ref(branch_name)
         tracking_ref = f"refs/remotes/origin/{branch_name}"
         run_command(["git", "fetch", "origin", f"{remote_ref}:{tracking_ref}"], cwd=repo_root, env=env)
         run_command(["git", "checkout", "-B", branch_name, tracking_ref], cwd=repo_root, env=env)
-        return
+        return True
 
     run_command(["git", "checkout", "-B", branch_name, default_branch], cwd=repo_root, env=env)
+    return False
 
 
 def commit_changes(repo_root: Path, version: str, env: dict[str, str]) -> None:
-    run_command(["git", "add", "."], cwd=repo_root, env=env)
+    run_command(["git", "add", "--all", ".claude"], cwd=repo_root, env=env)
     run_command(
         ["git", "commit", "-m", f"chore(ai): update Claude instructions to {version}"],
         cwd=repo_root,
@@ -187,8 +198,12 @@ def commit_changes(repo_root: Path, version: str, env: dict[str, str]) -> None:
     )
 
 
-def push_branch(repo_root: Path, branch_name: str, env: dict[str, str]) -> None:
-    run_command(["git", "push", "--set-upstream", "origin", branch_name], cwd=repo_root, env=env)
+def push_branch(repo_root: Path, branch_name: str, env: dict[str, str], *, force_with_lease: bool) -> None:
+    command = ["git", "push"]
+    if force_with_lease:
+        command.append("--force-with-lease")
+    command.extend(["--set-upstream", "origin", f"HEAD:{branch_ref(branch_name)}"])
+    run_command(command, cwd=repo_root, env=env)
 
 
 def find_open_pr(repo: str, branch_name: str, base_branch: str, env: dict[str, str]) -> str | None:
@@ -248,14 +263,14 @@ def process_target(target: Target, source_root: Path, version: str, env: dict[st
         clone_repository(target.repo, repo_root, env)
         configure_git_identity(repo_root, env["BOT_NAME"], env["BOT_EMAIL"], env)
         run_command(["git", "checkout", default_branch], cwd=repo_root, env=env)
-        checkout_branch(repo_root, branch_name, default_branch, env)
+        branch_exists = checkout_branch(repo_root, branch_name, default_branch, env)
         sync_payload(source_root / "payload", repo_root, version)
 
         if not repository_has_changes(repo_root, env):
             return f"{target.repo}: no changes"
 
         commit_changes(repo_root, version, env)
-        push_branch(repo_root, branch_name, env)
+        push_branch(repo_root, branch_name, env, force_with_lease=branch_exists)
         existing_pr = find_open_pr(target.repo, branch_name, default_branch, env)
         if existing_pr:
             return f"{target.repo}: updated existing PR {existing_pr}"

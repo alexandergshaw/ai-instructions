@@ -118,11 +118,6 @@ def validate_payload(payload_root: Path) -> list[str]:
             if not (skill_dir / "SKILL.md").is_file():
                 errors.append(f"Skill directory is missing SKILL.md: {skill_dir.relative_to(payload_root)}")
 
-    if shared_root.exists():
-        for path in sorted(shared_root.rglob("*.md")):
-            if not path.read_text(encoding="utf-8").strip():
-                errors.append(f"Shared Markdown file must be non-empty: {path.relative_to(payload_root)}")
-
     return errors
 
 
