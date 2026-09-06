@@ -90,7 +90,6 @@ def validate_payload(payload_root: Path) -> list[str]:
     if (payload_root / ".claude" / "rules").exists():
         errors.append("payload/ must not contain repository-local .claude/rules content.")
 
-    shared_root = payload_root / ".claude" / "shared"
     skills_root = payload_root / ".claude" / "skills"
 
     for path in sorted(payload_root.rglob("*")):

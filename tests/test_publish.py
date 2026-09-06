@@ -67,6 +67,14 @@ class PublishTests(unittest.TestCase):
         with self.assertRaises(PublishError):
             remote_branch_exists(self.workspace, "automation/claude-instructions-v1.0.0", {})
 
+    @patch("publish.subprocess.run")
+    def test_remote_branch_exists_returns_false_for_no_matching_refs(self, mock_run) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 2, stdout="", stderr="")
+
+        exists = remote_branch_exists(self.workspace, "automation/claude-instructions-v1.0.0", {})
+
+        self.assertFalse(exists)
+
     @patch("publish.run_command")
     def test_push_branch_uses_force_with_lease_only_when_requested(self, mock_run_command) -> None:
         push_branch(self.workspace, "automation/claude-instructions-v1.0.0", {}, force_with_lease=False)

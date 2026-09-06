@@ -161,7 +161,10 @@ def remote_branch_exists(repo_root: Path, branch_name: str, env: dict[str, str])
     if result.returncode == 0:
         return True
     if result.returncode == 2:
-        return False
+        if not result.stdout.strip() and not result.stderr.strip():
+            return False
+        details = result.stderr.strip() or result.stdout.strip()
+        raise PublishError(f"Failed to inspect remote branch {branch_name}: {details}")
 
     details = result.stderr.strip() or result.stdout.strip() or "git ls-remote failed"
     raise PublishError(f"Failed to inspect remote branch {branch_name}: {details}")

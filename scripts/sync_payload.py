@@ -107,6 +107,9 @@ def copy_payload(payload_root: Path, repo_root: Path) -> list[Path]:
             raise SyncError(f"Refusing to operate on symlinked managed path: {destination}")
         _ensure_no_symlink_parents(destination, repo_root)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.is_symlink():
+            raise SyncError(f"Refusing to operate on symlinked managed path: {destination}")
+        _ensure_no_symlink_parents(destination, repo_root)
         shutil.copy2(source, destination)
         copied_files.append(relative_path)
     return copied_files
