@@ -74,6 +74,30 @@ class SyncPayloadTests(unittest.TestCase):
 
         self.assertEqual(managed_file.read_text(encoding="utf-8"), "new")
 
+    def test_foreign_manifest_does_not_authorize_deletion(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        foreign_file = self.repo_root / ".claude/shared/testing/general.md"
+        foreign_file.parent.mkdir(parents=True, exist_ok=True)
+        foreign_file.write_text("foreign", encoding="utf-8")
+        manifest_path = self.repo_root / MANIFEST_RELATIVE_PATH
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "source": "another-tool",
+                    "version": "v9.9.9",
+                    "files": [".claude/shared/testing/general.md"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertEqual(foreign_file.read_text(encoding="utf-8"), "foreign")
+        self.assertEqual(self.read_manifest()["source"], "central-claude-instructions")
+
     def test_adding_new_payload_file_adds_it_to_repo(self) -> None:
         self.write_payload(".claude/shared/core/engineering.md", "engineering")
         sync_payload(self.payload_root, self.repo_root, "v1.0.0")

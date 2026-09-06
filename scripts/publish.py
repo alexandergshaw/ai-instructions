@@ -140,11 +140,15 @@ def clone_repository(repo: str, destination: Path, env: dict[str, str]) -> None:
     run_command(["gh", "repo", "clone", repo, str(destination), "--", "--depth", "1"], env=env)
 
 
+def branch_ref(branch_name: str) -> str:
+    return f"refs/heads/{branch_name}"
+
+
 def remote_branch_exists(repo_root: Path, branch_name: str, env: dict[str, str]) -> bool:
     merged_env = os.environ.copy()
     merged_env.update(env)
     result = subprocess.run(
-        ["git", "ls-remote", "--exit-code", "--heads", "origin", branch_name],
+        ["git", "ls-remote", "--exit-code", "origin", branch_ref(branch_name)],
         cwd=repo_root,
         env=merged_env,
         text=True,
@@ -165,8 +169,10 @@ def repository_has_changes(repo_root: Path, env: dict[str, str]) -> bool:
 
 def checkout_branch(repo_root: Path, branch_name: str, default_branch: str, env: dict[str, str]) -> None:
     if remote_branch_exists(repo_root, branch_name, env):
-        run_command(["git", "fetch", "origin", branch_name], cwd=repo_root, env=env)
-        run_command(["git", "checkout", "-B", branch_name, "FETCH_HEAD"], cwd=repo_root, env=env)
+        remote_ref = branch_ref(branch_name)
+        tracking_ref = f"refs/remotes/origin/{branch_name}"
+        run_command(["git", "fetch", "origin", f"{remote_ref}:{tracking_ref}"], cwd=repo_root, env=env)
+        run_command(["git", "checkout", "-B", branch_name, tracking_ref], cwd=repo_root, env=env)
         return
 
     run_command(["git", "checkout", "-B", branch_name, default_branch], cwd=repo_root, env=env)

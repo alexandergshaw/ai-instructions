@@ -43,6 +43,9 @@ def load_previous_manifest(repo_root: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise SyncError("Existing manifest must contain a JSON object.")
 
+    if data.get("source") != MANIFEST_SOURCE:
+        return {"files": []}
+
     files = data.get("files", [])
     if not isinstance(files, list) or not all(isinstance(item, str) for item in files):
         raise SyncError("Existing manifest must contain a string array in 'files'.")
