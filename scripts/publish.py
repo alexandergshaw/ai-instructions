@@ -144,6 +144,10 @@ def clone_repository(repo: str, destination: Path, env: dict[str, str]) -> None:
     run_command(["gh", "repo", "clone", repo, str(destination), "--", "--depth", "1"], env=env)
 
 
+def configure_git_transport_auth(env: dict[str, str]) -> None:
+    run_command(["gh", "auth", "setup-git"], env=env)
+
+
 def branch_ref(branch_name: str) -> str:
     return f"refs/heads/{branch_name}"
 
@@ -192,7 +196,14 @@ def checkout_branch(repo_root: Path, branch_name: str, default_branch: str, env:
 
 def commit_changes(repo_root: Path, version: str, managed_paths: list[Path], env: dict[str, str]) -> None:
     unique_paths = sorted({path.as_posix() for path in managed_paths})
-    run_command(["git", "add", "--all", "--", *unique_paths], cwd=repo_root, env=env)
+    existing_paths = [path for path in unique_paths if (repo_root / path).exists() or (repo_root / path).is_symlink()]
+    missing_paths = [path for path in unique_paths if path not in existing_paths]
+
+    if existing_paths:
+        run_command(["git", "add", "--", *existing_paths], cwd=repo_root, env=env)
+    if missing_paths:
+        run_command(["git", "rm", "--quiet", "--ignore-unmatch", "--", *missing_paths], cwd=repo_root, env=env)
+
     run_command(
         ["git", "commit", "-m", f"chore(ai): update Claude instructions to {version}"],
         cwd=repo_root,
@@ -289,6 +300,7 @@ def process_target(target: Target, source_root: Path, version: str, env: dict[st
 def main() -> int:
     source_root = Path(__file__).resolve().parents[1]
     env = require_environment()
+    configure_git_transport_auth(env)
     targets = [target for target in load_targets(source_root / "config" / "targets.json") if target.enabled]
 
     if not targets:

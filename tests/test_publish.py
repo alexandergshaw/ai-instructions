@@ -11,7 +11,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from publish import PublishError, branch_ref, commit_changes, load_targets, push_branch, remote_branch_exists  # noqa: E402
+from publish import PublishError, branch_ref, commit_changes, configure_git_transport_auth, load_targets, push_branch, remote_branch_exists  # noqa: E402
 
 
 class PublishTests(unittest.TestCase):
@@ -87,6 +87,13 @@ class PublishTests(unittest.TestCase):
 
     @patch("publish.run_command")
     def test_commit_changes_stages_only_managed_paths(self, mock_run_command) -> None:
+        managed_file = self.workspace / ".claude/shared/core/engineering.md"
+        manifest_file = self.workspace / ".claude/.central-instructions-manifest.json"
+        managed_file.parent.mkdir(parents=True, exist_ok=True)
+        manifest_file.parent.mkdir(parents=True, exist_ok=True)
+        managed_file.write_text("content", encoding="utf-8")
+        manifest_file.write_text("{}", encoding="utf-8")
+
         commit_changes(
             self.workspace,
             "v1.0.0",
@@ -95,10 +102,29 @@ class PublishTests(unittest.TestCase):
         )
 
         add_command = mock_run_command.call_args_list[0].args[0]
-        self.assertEqual(add_command[:4], ["git", "add", "--all", "--"])
+        self.assertEqual(add_command[:3], ["git", "add", "--"])
         self.assertIn(".claude/shared/core/engineering.md", add_command)
         self.assertIn(".claude/.central-instructions-manifest.json", add_command)
         self.assertNotIn(".", add_command)
+
+    @patch("publish.run_command")
+    def test_commit_changes_uses_git_rm_for_missing_managed_paths(self, mock_run_command) -> None:
+        commit_changes(
+            self.workspace,
+            "v1.0.0",
+            [Path(".claude/shared/core/engineering.md")],
+            {},
+        )
+
+        rm_command = mock_run_command.call_args_list[0].args[0]
+        self.assertEqual(rm_command[:4], ["git", "rm", "--quiet", "--ignore-unmatch"])
+        self.assertIn(".claude/shared/core/engineering.md", rm_command)
+
+    @patch("publish.run_command")
+    def test_configure_git_transport_auth_uses_gh(self, mock_run_command) -> None:
+        configure_git_transport_auth({})
+
+        self.assertEqual(mock_run_command.call_args.args[0], ["gh", "auth", "setup-git"])
 
 
 if __name__ == "__main__":
