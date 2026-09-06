@@ -8,7 +8,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from sync_payload import sync_payload
+from sync_payload import MANIFEST_RELATIVE_PATH, get_payload_files, load_previous_manifest, sync_payload
 
 REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 REQUIRED_ENV_VARS = ("GH_TOKEN", "SOURCE_VERSION", "BOT_NAME", "BOT_EMAIL")
@@ -179,18 +179,17 @@ def repository_has_changes(repo_root: Path, env: dict[str, str]) -> bool:
 
 def checkout_branch(repo_root: Path, branch_name: str, default_branch: str, env: dict[str, str]) -> bool:
     if remote_branch_exists(repo_root, branch_name, env):
-        remote_ref = branch_ref(branch_name)
-        tracking_ref = f"refs/remotes/origin/{branch_name}"
-        run_command(["git", "fetch", "origin", f"{remote_ref}:{tracking_ref}"], cwd=repo_root, env=env)
-        run_command(["git", "checkout", "-B", branch_name, tracking_ref], cwd=repo_root, env=env)
+        run_command(["git", "fetch", "origin", branch_name], cwd=repo_root, env=env)
+        run_command(["git", "checkout", "-B", branch_name, f"origin/{branch_name}"], cwd=repo_root, env=env)
         return True
 
     run_command(["git", "checkout", "-B", branch_name, default_branch], cwd=repo_root, env=env)
     return False
 
 
-def commit_changes(repo_root: Path, version: str, env: dict[str, str]) -> None:
-    run_command(["git", "add", "--all", ".claude"], cwd=repo_root, env=env)
+def commit_changes(repo_root: Path, version: str, managed_paths: list[Path], env: dict[str, str]) -> None:
+    unique_paths = sorted({path.as_posix() for path in managed_paths})
+    run_command(["git", "add", "--all", "--", *unique_paths], cwd=repo_root, env=env)
     run_command(
         ["git", "commit", "-m", f"chore(ai): update Claude instructions to {version}"],
         cwd=repo_root,
@@ -264,12 +263,17 @@ def process_target(target: Target, source_root: Path, version: str, env: dict[st
         configure_git_identity(repo_root, env["BOT_NAME"], env["BOT_EMAIL"], env)
         run_command(["git", "checkout", default_branch], cwd=repo_root, env=env)
         branch_exists = checkout_branch(repo_root, branch_name, default_branch, env)
+        previous_manifest = load_previous_manifest(repo_root)
+        current_payload_files = get_payload_files(source_root / "payload")
         sync_payload(source_root / "payload", repo_root, version)
 
         if not repository_has_changes(repo_root, env):
             return f"{target.repo}: no changes"
 
-        commit_changes(repo_root, version, env)
+        managed_paths = [Path(item) for item in previous_manifest.get("files", []) if isinstance(item, str)]
+        managed_paths.extend(current_payload_files)
+        managed_paths.append(MANIFEST_RELATIVE_PATH)
+        commit_changes(repo_root, version, managed_paths, env)
         push_branch(repo_root, branch_name, env, force_with_lease=branch_exists)
         existing_pr = find_open_pr(target.repo, branch_name, default_branch, env)
         if existing_pr:

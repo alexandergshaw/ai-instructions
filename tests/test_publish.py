@@ -11,7 +11,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from publish import PublishError, branch_ref, load_targets, push_branch, remote_branch_exists  # noqa: E402
+from publish import PublishError, branch_ref, commit_changes, load_targets, push_branch, remote_branch_exists  # noqa: E402
 
 
 class PublishTests(unittest.TestCase):
@@ -76,6 +76,21 @@ class PublishTests(unittest.TestCase):
         second_command = mock_run_command.call_args_list[1].args[0]
         self.assertNotIn("--force-with-lease", first_command)
         self.assertIn("--force-with-lease", second_command)
+
+    @patch("publish.run_command")
+    def test_commit_changes_stages_only_managed_paths(self, mock_run_command) -> None:
+        commit_changes(
+            self.workspace,
+            "v1.0.0",
+            [Path(".claude/shared/core/engineering.md"), Path(".claude/.central-instructions-manifest.json")],
+            {},
+        )
+
+        add_command = mock_run_command.call_args_list[0].args[0]
+        self.assertEqual(add_command[:4], ["git", "add", "--all", "--"])
+        self.assertIn(".claude/shared/core/engineering.md", add_command)
+        self.assertIn(".claude/.central-instructions-manifest.json", add_command)
+        self.assertNotIn(".", add_command)
 
 
 if __name__ == "__main__":
