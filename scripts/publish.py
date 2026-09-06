@@ -105,12 +105,23 @@ def load_targets(config_path: Path) -> list[Target]:
         seen_repos.add(repo)
         if not isinstance(enabled, bool):
             raise PublishError(f"Target {repo} has a non-boolean enabled value.")
+
+        profile = item.get("profile")
+        if profile is not None and not isinstance(profile, str):
+            raise PublishError(f"Target {repo} has a non-string profile value.")
+
+        languages = item.get("languages")
+        if languages is not None and (
+            not isinstance(languages, list) or not all(isinstance(language, str) for language in languages)
+        ):
+            raise PublishError(f"Target {repo} has a non-string languages entry.")
+
         targets.append(
             Target(
                 repo=repo,
                 enabled=enabled,
-                profile=item.get("profile"),
-                languages=item.get("languages"),
+                profile=profile,
+                languages=languages,
             )
         )
     return targets
@@ -171,7 +182,7 @@ def commit_changes(repo_root: Path, version: str, env: dict[str, str]) -> None:
 
 
 def push_branch(repo_root: Path, branch_name: str, env: dict[str, str]) -> None:
-    run_command(["git", "push", "--set-upstream", "origin", branch_name], cwd=repo_root, env=env)
+    run_command(["git", "push", "--force-with-lease", "--set-upstream", "origin", branch_name], cwd=repo_root, env=env)
 
 
 def find_open_pr(repo: str, branch_name: str, base_branch: str, env: dict[str, str]) -> str | None:
@@ -263,7 +274,7 @@ def main() -> int:
             message = process_target(target, source_root, env["SOURCE_VERSION"], env)
             print(message)
             successes.append(message)
-        except Exception as exc:
+        except (OSError, PublishError, json.JSONDecodeError) as exc:
             message = f"{target.repo}: FAILED - {exc}"
             print(message)
             failures.append(message)

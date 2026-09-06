@@ -66,6 +66,8 @@ def remove_stale_files(previous_files: list[str], current_files: list[Path], rep
 
         destination = repo_root / Path(relative_name)
         _ensure_within_repo(destination, repo_root)
+        if destination.is_symlink():
+            raise SyncError(f"Refusing to delete symlinked managed path: {destination}")
         if destination.exists() and destination.is_file():
             destination.unlink()
             remove_empty_parents(destination, managed_root)

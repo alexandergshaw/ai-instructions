@@ -56,6 +56,12 @@ class ValidateTests(unittest.TestCase):
         )
         self.assertTrue(any("boolean" in error for error in errors))
 
+    def test_missing_enabled_value_is_allowed(self) -> None:
+        errors = validate_targets_config(
+            self.write_targets({"targets": [{"repo": "owner/repository"}]})
+        )
+        self.assertEqual(errors, [])
+
     def test_missing_payload_is_rejected(self) -> None:
         errors = validate_payload(self.repo_root / "missing-payload")
         self.assertTrue(any("Missing payload directory" in error for error in errors))
