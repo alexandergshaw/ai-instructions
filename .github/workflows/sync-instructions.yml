@@ -1,0 +1,96 @@
+name: Sync Claude Instructions
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to publish from for manual testing
+        required: true
+        default: main
+      version:
+        description: Optional version label to publish
+        required: false
+
+concurrency:
+  group: publish-claude-instructions
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository for release
+        if: github.event_name == 'release'
+        uses: actions/checkout@v4
+
+      - name: Check out repository for manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Create GitHub App installation token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.CLAUDE_SYNC_APP_CLIENT_ID }}
+          owner: ${{ vars.CLAUDE_SYNC_INSTALLATION_OWNER }}
+          private-key: ${{ secrets.CLAUDE_SYNC_APP_PRIVATE_KEY }}
+
+      - name: Install GitHub CLI
+        run: |
+          type gh >/dev/null 2>&1 || {
+            sudo apt-get update
+            sudo apt-get install --yes gh
+          }
+
+      - name: Determine source version
+        id: version
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            SHORT_SHA="$(git rev-parse --short HEAD)"
+            VERSION="manual-${SHORT_SHA}"
+          fi
+          echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Determine bot identity
+        id: bot
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          if [ -z "$APP_SLUG" ]; then
+            echo "App slug was not returned by actions/create-github-app-token@v3" >&2
+            exit 1
+          fi
+          BOT_USER_ID="$(gh api "/users/${APP_SLUG}[bot]" --jq '.id')"
+          echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${BOT_USER_ID}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
+      - name: Validate repository
+        run: python scripts/validate.py
+
+      - name: Publish payload to targets
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SOURCE_VERSION: ${{ steps.version.outputs.value }}
+          BOT_NAME: ${{ steps.bot.outputs.name }}
+          BOT_EMAIL: ${{ steps.bot.outputs.email }}
+        run: python scripts/publish.py

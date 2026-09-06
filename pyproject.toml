@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-instructions"
+version = "0.1.0"
+description = "Centralized Claude instruction distribution automation"
+requires-python = ">=3.12"
+
+[tool.unittest]
+start-directory = "tests"
