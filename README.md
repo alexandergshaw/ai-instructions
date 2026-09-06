@@ -26,6 +26,17 @@ Human review + merge
 
 The distributed payload lives under `payload/.claude/` in this repository and is copied into downstream repositories under `.claude/`.
 
+
+## Repository-local AI instructions
+
+`AGENTS.md` is the canonical cross-agent guidance for working on this repository itself.
+
+- `CLAUDE.md` is a thin Claude adapter that points to `AGENTS.md`.
+- `.github/copilot-instructions.md` is a thin GitHub Copilot adapter that points to `AGENTS.md`.
+- `.claude/rules/**` contains Claude-specific scoped rules for working on particular areas of this central repository.
+
+None of these control-plane files are automatically included in the downstream distributed payload under `payload/`.
+
 ## Ownership boundary
 
 Central repo owns:

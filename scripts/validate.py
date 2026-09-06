@@ -80,9 +80,15 @@ def validate_payload(payload_root: Path) -> list[str]:
     if not payload_root.is_dir():
         return [f"Missing payload directory: {payload_root}"]
 
+    if (payload_root / "AGENTS.md").exists():
+        errors.append("payload/ must not contain a root AGENTS.md file.")
+
     root_claude = payload_root / "CLAUDE.md"
     if root_claude.exists():
         errors.append("payload/ must not contain a root CLAUDE.md file.")
+
+    if (payload_root / ".claude" / "rules").exists():
+        errors.append("payload/ must not contain repository-local .claude/rules content.")
 
     shared_root = payload_root / ".claude" / "shared"
     skills_root = payload_root / ".claude" / "skills"
@@ -120,8 +126,27 @@ def validate_payload(payload_root: Path) -> list[str]:
     return errors
 
 
+def validate_control_plane(repo_root: Path) -> list[str]:
+    errors: list[str] = []
+    required_files = [
+        repo_root / "AGENTS.md",
+        repo_root / "CLAUDE.md",
+        repo_root / ".github" / "copilot-instructions.md",
+    ]
+
+    for path in required_files:
+        if not path.is_file():
+            errors.append(f"Missing required control-plane file: {path.relative_to(repo_root)}")
+            continue
+        if not path.read_text(encoding="utf-8").strip():
+            errors.append(f"Control-plane file must be non-empty: {path.relative_to(repo_root)}")
+
+    return errors
+
+
 def validate_repository(repo_root: Path) -> list[str]:
     errors: list[str] = []
+    errors.extend(validate_control_plane(repo_root))
     errors.extend(validate_targets_config(repo_root / "config" / "targets.json"))
     errors.extend(validate_payload(repo_root / "payload"))
     return errors
