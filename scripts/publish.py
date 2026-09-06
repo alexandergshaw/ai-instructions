@@ -182,7 +182,7 @@ def commit_changes(repo_root: Path, version: str, env: dict[str, str]) -> None:
 
 
 def push_branch(repo_root: Path, branch_name: str, env: dict[str, str]) -> None:
-    run_command(["git", "push", "--force-with-lease", "--set-upstream", "origin", branch_name], cwd=repo_root, env=env)
+    run_command(["git", "push", "--set-upstream", "origin", branch_name], cwd=repo_root, env=env)
 
 
 def find_open_pr(repo: str, branch_name: str, base_branch: str, env: dict[str, str]) -> str | None:

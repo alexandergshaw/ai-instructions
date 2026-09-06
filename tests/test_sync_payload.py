@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from sync_payload import MANIFEST_RELATIVE_PATH, sync_payload  # noqa: E402
+from sync_payload import MANIFEST_RELATIVE_PATH, SyncError, sync_payload  # noqa: E402
 
 
 class SyncPayloadTests(unittest.TestCase):
@@ -94,6 +94,19 @@ class SyncPayloadTests(unittest.TestCase):
 
         self.assertFalse((self.repo_root / ".claude/shared/testing/general.md").exists())
         self.assertTrue((self.repo_root / ".claude/shared/core/engineering.md").exists())
+
+    def test_symlinked_managed_destination_is_rejected(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        external_file = self.workspace / "outside.md"
+        external_file.write_text("outside", encoding="utf-8")
+        managed_file = self.repo_root / ".claude/shared/core/engineering.md"
+        managed_file.parent.mkdir(parents=True, exist_ok=True)
+        managed_file.symlink_to(external_file)
+
+        with self.assertRaises(SyncError):
+            sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertEqual(external_file.read_text(encoding="utf-8"), "outside")
 
     def test_unmanaged_claude_files_are_preserved(self) -> None:
         self.write_payload(".claude/shared/core/engineering.md", "engineering")

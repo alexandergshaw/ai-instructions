@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -13,8 +14,24 @@ class SyncError(RuntimeError):
     """Raised when synchronization cannot proceed safely."""
 
 
-def _ensure_within_repo(path: Path, repo_root: Path) -> None:
-    path.resolve().relative_to(repo_root.resolve())
+def _resolve_managed_path(relative_path: Path, repo_root: Path) -> Path:
+    if relative_path.is_absolute() or any(part == ".." for part in relative_path.parts):
+        raise SyncError(f"Managed path must stay within the repository: {relative_path}")
+
+    destination = repo_root / relative_path
+    normalized = Path(os.path.normpath(destination))
+    try:
+        normalized.relative_to(repo_root)
+    except ValueError as exc:
+        raise SyncError(f"Managed path escapes the repository: {relative_path}") from exc
+
+    current = destination
+    while current != repo_root:
+        if current.exists() and current.is_symlink():
+            raise SyncError(f"Refusing to operate on symlinked managed path: {current}")
+        current = current.parent
+
+    return destination
 
 
 def load_previous_manifest(repo_root: Path) -> dict[str, Any]:
@@ -64,10 +81,7 @@ def remove_stale_files(previous_files: list[str], current_files: list[Path], rep
         if relative_name in current_set:
             continue
 
-        destination = repo_root / Path(relative_name)
-        _ensure_within_repo(destination, repo_root)
-        if destination.is_symlink():
-            raise SyncError(f"Refusing to delete symlinked managed path: {destination}")
+        destination = _resolve_managed_path(Path(relative_name), repo_root)
         if destination.exists() and destination.is_file():
             destination.unlink()
             remove_empty_parents(destination, managed_root)
@@ -77,8 +91,7 @@ def copy_payload(payload_root: Path, repo_root: Path) -> list[Path]:
     copied_files: list[Path] = []
     for relative_path in get_payload_files(payload_root):
         source = payload_root / relative_path
-        destination = repo_root / relative_path
-        _ensure_within_repo(destination, repo_root)
+        destination = _resolve_managed_path(relative_path, repo_root)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
         copied_files.append(relative_path)
@@ -114,6 +127,7 @@ __all__ = [
     "copy_payload",
     "get_payload_files",
     "load_previous_manifest",
+    "_resolve_managed_path",
     "remove_empty_parents",
     "remove_stale_files",
     "sync_payload",
