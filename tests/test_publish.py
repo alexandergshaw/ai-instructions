@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from publish import PublishError, branch_ref, commit_changes, configure_git_transport_auth, load_targets, push_branch, remote_branch_exists  # noqa: E402
+from sync_payload import SyncError  # noqa: E402
 
 
 class PublishTests(unittest.TestCase):
@@ -49,6 +50,50 @@ class PublishTests(unittest.TestCase):
 
         self.assertEqual(targets[0].profile, "student-autograded")
         self.assertEqual(targets[0].languages, ["python", "sql"])
+
+    def test_sync_error_in_one_target_does_not_abort_remaining_targets(self) -> None:
+        """AGENTS.md: one downstream failure must not prevent attempts against the rest."""
+        import publish
+
+        processed: list[str] = []
+
+        def fake_process_target(target, source_root, version, env):
+            processed.append(target.repo)
+            if target.repo == "owner/broken":
+                raise SyncError("manifest names a path outside the managed area")
+            return f"{target.repo}: ok"
+
+        targets_file = self.write_targets(
+            {
+                "targets": [
+                    {"repo": "owner/broken", "enabled": True},
+                    {"repo": "owner/healthy", "enabled": True},
+                ]
+            }
+        )
+
+        env = {
+            "GH_TOKEN": "token",
+            "SOURCE_VERSION": "v1.0.0",
+            "BOT_NAME": "bot",
+            "BOT_EMAIL": "bot@example.com",
+        }
+
+        with patch.object(publish, "process_target", fake_process_target), patch.object(
+            publish, "require_environment", lambda: env
+        ), patch.object(publish, "configure_git_transport_auth", lambda _env: None), patch.object(
+            publish, "load_targets", lambda _path: load_targets(targets_file)
+        ), patch("builtins.print") as mock_print:
+            exit_code = publish.main()
+
+        self.assertEqual(processed, ["owner/broken", "owner/healthy"])
+        self.assertEqual(exit_code, 1)
+        # The healthy target must be recorded as a success, not merely attempted: a run that
+        # marked every target failed would otherwise satisfy the assertions above.
+        printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertIn("owner/healthy: ok", printed)
+        self.assertIn("Successful targets: 1", printed)
+        self.assertIn("Failed targets: 1", printed)
 
     @patch("publish.subprocess.run")
     def test_remote_branch_exists_uses_exact_ref(self, mock_run) -> None:

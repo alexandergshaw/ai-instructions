@@ -15,6 +15,7 @@ Examples:
 ```text
 AGENTS.md
 CLAUDE.md
+DEVELOPMENT-LOOP.md
 .github/**
 .claude/**
 config/**
@@ -45,6 +46,16 @@ inside a downstream repository.
 
 Keep this distinction explicit in every change.
 
+## Working Procedure
+
+This document defines policy: what must be true, and who owns what. `DEVELOPMENT-LOOP.md`
+defines procedure: what to do, in what order, and what must be proven before a change is
+complete.
+
+Follow `DEVELOPMENT-LOOP.md` for every change. It classifies work into three tiers by blast
+radius and states the gates required at each. Where the two documents appear to conflict, this
+one governs.
+
 ## Critical Ownership Boundary
 
 - Root `AGENTS.md` defines how repository-aware coding agents work on this repository.
@@ -67,6 +78,7 @@ Rules:
 | Concern | Source of truth |
 | --- | --- |
 | How agents work on this repository | `AGENTS.md` |
+| Development procedure and change tiers | `DEVELOPMENT-LOOP.md` |
 | Claude adapter for this repository | `CLAUDE.md` |
 | Copilot adapter for this repository | `.github/copilot-instructions.md` |
 | Repo-specific Claude rules | `.claude/rules/**` |

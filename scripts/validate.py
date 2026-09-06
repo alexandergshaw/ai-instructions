@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from sync_payload import MANAGED_ROOTS, managed_area_description
+
 REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 FORBIDDEN_FILENAMES = {
     ".env",
@@ -87,6 +89,9 @@ def validate_payload(payload_root: Path) -> list[str]:
     if root_claude.exists():
         errors.append("payload/ must not contain a root CLAUDE.md file.")
 
+    if (payload_root / "DEVELOPMENT-LOOP.md").exists():
+        errors.append("payload/ must not contain DEVELOPMENT-LOOP.md; it is a control-plane file.")
+
     if (payload_root / ".claude" / "rules").exists():
         errors.append("payload/ must not contain repository-local .claude/rules content.")
 
@@ -105,6 +110,14 @@ def validate_payload(payload_root: Path) -> list[str]:
 
         if _contains_forbidden_filename(path):
             errors.append(f"Forbidden secret-like file detected in payload: {path.relative_to(payload_root)}")
+
+        if path.is_file():
+            first_component = path.relative_to(payload_root).parts[0]
+            if first_component not in MANAGED_ROOTS:
+                errors.append(
+                    f"Payload content must live under {managed_area_description()}: "
+                    f"{path.relative_to(payload_root).as_posix()}"
+                )
 
         if path.is_file() and path.suffix.lower() == ".md":
             if not path.read_text(encoding="utf-8").strip():
