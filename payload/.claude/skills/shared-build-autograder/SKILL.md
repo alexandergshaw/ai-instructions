@@ -1,3 +1,8 @@
+---
+name: shared-build-autograder
+description: Build or replace an automated grading harness for a student assignment. Derives tests from the assignment's stated requirements, keeps the harness outside student directories, and reports coverage gaps without revealing solutions. Use when creating or standardizing autograder tests, or deciding which parts of an assignment are objectively testable. Not for writing a student's own solution, not for writing tests against one student's submission, and not for altering an assignment's requirements to make grading easier.
+---
+
 # Shared Build Autograder
 
 ## Procedure

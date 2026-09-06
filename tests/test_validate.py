@@ -12,6 +12,15 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from validate import validate_control_plane, validate_payload, validate_repository, validate_targets_config  # noqa: E402
 
 
+SKILL_FRONTMATTER = """---
+name: {name}
+description: What this skill does and when an agent should reach for it.
+---
+
+# Skill
+"""
+
+
 class ValidateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -24,7 +33,9 @@ class ValidateTests(unittest.TestCase):
         (self.repo_root / "CLAUDE.md").write_text("@AGENTS.md", encoding="utf-8")
         (self.repo_root / ".github/copilot-instructions.md").write_text("read AGENTS.md", encoding="utf-8")
         (self.repo_root / "payload/.claude/shared/core/engineering.md").write_text("content", encoding="utf-8")
-        (self.repo_root / "payload/.claude/skills/shared-example/SKILL.md").write_text("content", encoding="utf-8")
+        (self.repo_root / "payload/.claude/skills/shared-example/SKILL.md").write_text(
+            SKILL_FRONTMATTER.format(name="shared-example"), encoding="utf-8"
+        )
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -95,6 +106,127 @@ class ValidateTests(unittest.TestCase):
 
         self.assertTrue(any("root AGENTS.md" in error for error in errors))
 
+    def test_skill_without_frontmatter_is_rejected(self) -> None:
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text("# Shared Example\n\n## Procedure\n", encoding="utf-8")
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("must open with YAML frontmatter" in error for error in errors))
+
+    def test_skill_without_description_is_rejected(self) -> None:
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text("---\nname: shared-example\n---\n\n# Shared Example\n", encoding="utf-8")
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("must define a non-empty description" in error for error in errors))
+
+    def test_skill_with_empty_name_is_rejected(self) -> None:
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text("---\nname:\ndescription: A thing.\n---\n", encoding="utf-8")
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("non-empty name" in error for error in errors))
+
+    def test_skill_frontmatter_with_unquoted_colon_is_rejected(self) -> None:
+        """A value containing an unquoted colon is not loadable YAML."""
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text(
+            "---\nname: shared-example\ndescription: Use when: building a thing.\n---\n",
+            encoding="utf-8",
+        )
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("containing a colon must be quoted" in error for error in errors))
+
+    def test_skill_frontmatter_without_space_after_colon_is_rejected(self) -> None:
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text(
+            "---\nname:shared-example\ndescription: A thing.\n---\n", encoding="utf-8"
+        )
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("key: value" in error for error in errors))
+
+    def test_skill_frontmatter_tolerates_a_byte_order_mark(self) -> None:
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text(
+            "﻿" + SKILL_FRONTMATTER.format(name="shared-example"), encoding="utf-8"
+        )
+
+        self.assertEqual(validate_payload(self.repo_root / "payload"), [])
+
+    def test_skill_frontmatter_accepts_a_quoted_name(self) -> None:
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text(
+            '---\nname: "shared-example"\ndescription: A thing.\n---\n', encoding="utf-8"
+        )
+
+        self.assertEqual(validate_payload(self.repo_root / "payload"), [])
+
+    def test_nested_key_does_not_shadow_a_top_level_field(self) -> None:
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text(
+            "---\nname: shared-example\ndescription: A thing.\nmetadata:\n  name: other\n---\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual(validate_payload(self.repo_root / "payload"), [])
+
+    def test_skill_frontmatter_wrapped_value_is_rejected(self) -> None:
+        """A wrapped plain scalar is ambiguous; refusing it beats guessing at YAML rules."""
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text(
+            "---\nname: shared-example\ndescription: A thing.\n  Use when: building it.\n---\n",
+            encoding="utf-8",
+        )
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("must be on one line" in error for error in errors))
+
+    def test_skill_frontmatter_value_starting_with_an_indicator_is_rejected(self) -> None:
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text(
+            "---\nname: shared-example\ndescription: - a thing\n---\n", encoding="utf-8"
+        )
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("must be quoted" in error for error in errors))
+
+    def test_value_that_merely_starts_and_ends_with_a_quote_is_not_treated_as_quoted(self) -> None:
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text(
+            '---\nname: shared-example\ndescription: "a": and "b"\n---\n', encoding="utf-8"
+        )
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("must be quoted" in error for error in errors))
+
+    def test_non_utf8_skill_reports_an_error_rather_than_crashing(self) -> None:
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_bytes(b"---\nname: shared-example\ndescription: caf\xe9\n---\n")
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("UTF-8 encoded" in error for error in errors))
+
+    def test_skill_name_must_match_its_directory(self) -> None:
+        skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"
+        skill.write_text(
+            SKILL_FRONTMATTER.format(name="shared-something-else"), encoding="utf-8"
+        )
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("must match its directory" in error for error in errors))
+
     def test_payload_content_outside_managed_roots_is_rejected(self) -> None:
         workflows = self.repo_root / "payload/.github/workflows"
         workflows.mkdir(parents=True)
@@ -130,7 +262,9 @@ class ValidateTests(unittest.TestCase):
     def test_incorrectly_named_skill_is_rejected(self) -> None:
         wrong_skill = self.repo_root / "payload/.claude/skills/not-shared"
         wrong_skill.mkdir(parents=True)
-        (wrong_skill / "SKILL.md").write_text("content", encoding="utf-8")
+        (wrong_skill / "SKILL.md").write_text(
+            SKILL_FRONTMATTER.format(name="not-shared"), encoding="utf-8"
+        )
 
         errors = validate_payload(self.repo_root / "payload")
 

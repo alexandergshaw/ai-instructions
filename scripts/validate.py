@@ -77,6 +77,103 @@ def _contains_forbidden_filename(path: Path) -> bool:
     return path.name in FORBIDDEN_FILENAMES or path.suffix.lower() in FORBIDDEN_SUFFIXES
 
 
+FRONTMATTER_FIELD_PATTERN = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):(?: (.*))?$")
+
+
+# A plain (unquoted) YAML scalar may not begin with any of these.
+YAML_INDICATORS = set("-?:,[]{}#&*!|>'\"%@`")
+
+
+def _unquote(value: str) -> tuple[str, bool]:
+    """Return the value with its surrounding quotes removed, and whether it was truly quoted.
+
+    A value merely starting and ending with a quote character is not a quoted scalar --
+    `"a" and "b"` is not -- so the quote must not recur inside.
+    """
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        inner = value[1:-1]
+        if value[0] not in inner:
+            return inner, True
+    return value, False
+
+
+def validate_skill_frontmatter(skill_dir: Path, payload_root: Path) -> list[str]:
+    """A skill is discovered by its frontmatter, so frontmatter no loader can read is inert.
+
+    This deliberately refuses anything it cannot parse unambiguously rather than guessing.
+    A validator that accepts frontmatter a YAML loader would reject is worse than no
+    validator, because it certifies a skill that will silently fail to load downstream.
+    """
+    skill_file = skill_dir / "SKILL.md"
+    relative = skill_file.relative_to(payload_root).as_posix()
+    try:
+        lines = skill_file.read_text(encoding="utf-8-sig").splitlines()
+    except UnicodeDecodeError:
+        return [f"Skill must be UTF-8 encoded: {relative}"]
+
+    if not lines or lines[0].strip() != "---":
+        return [f"Skill must open with YAML frontmatter: {relative}"]
+
+    closing = next((index for index, line in enumerate(lines[1:], 1) if line.strip() == "---"), None)
+    if closing is None:
+        return [f"Skill frontmatter is not closed by a '---' line: {relative}"]
+
+    errors: list[str] = []
+    fields: dict[str, str] = {}
+    previous_key_had_value = False
+    for line in lines[1:closing]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+
+        if line[:1].isspace():
+            # Indented under a key that already had a scalar value, this is a wrapped plain
+            # scalar, whose meaning depends on YAML rules this validator does not implement.
+            if previous_key_had_value:
+                errors.append(
+                    f"Skill frontmatter value must be on one line: {relative}: {line.strip()!r}"
+                )
+            # Otherwise it is a nested block, which belongs to the key above, not the top level.
+            continue
+
+        match = FRONTMATTER_FIELD_PATTERN.match(line)
+        if match is None:
+            errors.append(f"Skill frontmatter line must be 'key: value': {relative}: {line!r}")
+            previous_key_had_value = False
+            continue
+
+        key, raw_value = match.group(1), (match.group(2) or "").strip()
+        previous_key_had_value = bool(raw_value)
+        if not raw_value:
+            fields[key] = ""
+            continue
+
+        value, quoted = _unquote(raw_value)
+        if not quoted:
+            if raw_value[0] in YAML_INDICATORS:
+                errors.append(
+                    f"Skill frontmatter value starting with '{raw_value[0]}' must be quoted: "
+                    f"{relative}: {key}"
+                )
+                continue
+            if ": " in raw_value or raw_value.endswith(":"):
+                errors.append(
+                    f"Skill frontmatter value containing a colon must be quoted: {relative}: {key}"
+                )
+                continue
+        fields[key] = value
+
+    name = fields.get("name", "")
+    if not name:
+        errors.append(f"Skill frontmatter must define a non-empty name: {relative}")
+    elif name != skill_dir.name:
+        errors.append(f"Skill frontmatter name must match its directory ({skill_dir.name}): {relative}")
+
+    if not fields.get("description"):
+        errors.append(f"Skill frontmatter must define a non-empty description: {relative}")
+
+    return errors
+
+
 def validate_payload(payload_root: Path) -> list[str]:
     errors: list[str] = []
     if not payload_root.is_dir():
@@ -120,7 +217,12 @@ def validate_payload(payload_root: Path) -> list[str]:
                 )
 
         if path.is_file() and path.suffix.lower() == ".md":
-            if not path.read_text(encoding="utf-8").strip():
+            try:
+                contents = path.read_text(encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                errors.append(f"Markdown file must be UTF-8 encoded: {path.relative_to(payload_root)}")
+                continue
+            if not contents.strip():
                 errors.append(f"Markdown file must be non-empty: {path.relative_to(payload_root)}")
 
     if skills_root.exists():
@@ -129,6 +231,8 @@ def validate_payload(payload_root: Path) -> list[str]:
                 errors.append(f"Centrally distributed skill directories must begin with 'shared-': {skill_dir.name}")
             if not (skill_dir / "SKILL.md").is_file():
                 errors.append(f"Skill directory is missing SKILL.md: {skill_dir.relative_to(payload_root)}")
+                continue
+            errors.extend(validate_skill_frontmatter(skill_dir, payload_root))
 
     return errors
 

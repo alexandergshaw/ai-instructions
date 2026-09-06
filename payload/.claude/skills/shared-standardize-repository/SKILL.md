@@ -1,3 +1,8 @@
+---
+name: shared-standardize-repository
+description: Reconcile a repository's layout against shared structure conventions, making the minimum change needed. Use when files are demonstrably in the wrong place - source mixed into tests, generated output committed beside handwritten code, two directories serving one purpose. Not for a layout that merely differs from another project's. Never moves, renames or splits a file whose path is fixed by an assignment, an autograder, a submission process, or code that reads it by path, and treats a test file colocated with the assignment it grades as a supported layout rather than an inconsistency.
+---
+
 # Shared Standardize Repository
 
 ## Procedure
