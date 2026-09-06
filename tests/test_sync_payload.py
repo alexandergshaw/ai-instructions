@@ -9,7 +9,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from sync_payload import MANIFEST_RELATIVE_PATH, SyncError, sync_payload  # noqa: E402
+from sync_payload import MANIFEST_RELATIVE_PATH, MANIFEST_SOURCE, SyncError, copy_payload, sync_payload  # noqa: E402
+
+
+def _detect_symlink_support() -> bool:
+    """Report whether this platform lets the current user create symlinks."""
+    with tempfile.TemporaryDirectory() as probe_dir:
+        probe_root = Path(probe_dir)
+        probe_target = probe_root / "target.txt"
+        probe_target.write_text("probe", encoding="utf-8")
+        try:
+            (probe_root / "link.txt").symlink_to(probe_target)
+        except (NotImplementedError, OSError):
+            return False
+    return True
+
+
+SYMLINKS_SUPPORTED = _detect_symlink_support()
 
 
 class SyncPayloadTests(unittest.TestCase):
@@ -28,6 +44,21 @@ class SyncPayloadTests(unittest.TestCase):
         path = self.payload_root / Path(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+
+    def write_manifest_files(self, files: list[str]) -> None:
+        manifest_path = self.repo_root / MANIFEST_RELATIVE_PATH
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "source": MANIFEST_SOURCE,
+                    "version": "v0.9.0",
+                    "files": files,
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def read_manifest(self) -> dict[str, object]:
         return json.loads((self.repo_root / MANIFEST_RELATIVE_PATH).read_text(encoding="utf-8"))
@@ -119,6 +150,101 @@ class SyncPayloadTests(unittest.TestCase):
         self.assertFalse((self.repo_root / ".claude/shared/testing/general.md").exists())
         self.assertTrue((self.repo_root / ".claude/shared/core/engineering.md").exists())
 
+    def test_manifest_entry_outside_managed_roots_is_skipped_not_deleted(self) -> None:
+        """A manifest is untrusted input; it may not authorize deletions outside .claude/."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        (self.repo_root / "CLAUDE.md").write_text("downstream owned", encoding="utf-8")
+        (self.repo_root / "src").mkdir()
+        (self.repo_root / "src" / "main.py").write_text("code", encoding="utf-8")
+        self.write_manifest_files(["CLAUDE.md", "src/main.py"])
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertEqual((self.repo_root / "CLAUDE.md").read_text(encoding="utf-8"), "downstream owned")
+        self.assertEqual((self.repo_root / "src/main.py").read_text(encoding="utf-8"), "code")
+        # The rewritten manifest stops claiming the entries, so the repository self-heals.
+        self.assertEqual(self.read_manifest()["files"], [".claude/shared/core/engineering.md"])
+
+    def test_refused_entry_does_not_block_delivery_or_later_syncs(self) -> None:
+        """A malformed manifest must not freeze a downstream repository."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        self.write_manifest_files(["CLAUDE.md"])
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+        self.assertTrue((self.repo_root / ".claude/shared/core/engineering.md").is_file())
+
+        sync_payload(self.payload_root, self.repo_root, "v1.1.0")
+        self.assertEqual(self.read_manifest()["version"], "v1.1.0")
+
+    def test_stale_entry_is_deleted_even_when_another_entry_is_refused(self) -> None:
+        """Vetting happens up front: one bad entry must not abort legitimate cleanup."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        stale = self.repo_root / ".claude/shared/legacy/removed.md"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text("stale", encoding="utf-8")
+        (self.repo_root / "CLAUDE.md").write_text("downstream owned", encoding="utf-8")
+        self.write_manifest_files([".claude/shared/legacy/removed.md", "CLAUDE.md"])
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertFalse(stale.exists())
+        self.assertEqual((self.repo_root / "CLAUDE.md").read_text(encoding="utf-8"), "downstream owned")
+
+    def test_no_partial_deletion_when_a_later_entry_is_refused(self) -> None:
+        """A traversal entry sorts after a legitimate one; the legitimate one must still be safe."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        stale = self.repo_root / ".claude/shared/legacy/removed.md"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text("stale", encoding="utf-8")
+        (self.repo_root / "CLAUDE.md").write_text("downstream owned", encoding="utf-8")
+        self.write_manifest_files([".claude/shared/legacy/removed.md", ".claude/zz/../../CLAUDE.md"])
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertEqual((self.repo_root / "CLAUDE.md").read_text(encoding="utf-8"), "downstream owned")
+        self.assertNotIn(".claude/zz/../../CLAUDE.md", self.read_manifest()["files"])
+
+    def test_managed_root_must_be_the_first_path_component(self) -> None:
+        """'.claude' buried deeper in a path does not make the entry ours to delete."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        impostor = self.repo_root / "src/.claude/notes.md"
+        impostor.parent.mkdir(parents=True, exist_ok=True)
+        impostor.write_text("downstream owned", encoding="utf-8")
+        self.write_manifest_files(["src/.claude/notes.md"])
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertEqual(impostor.read_text(encoding="utf-8"), "downstream owned")
+
+    def test_empty_manifest_entry_is_harmless(self) -> None:
+        """A blank entry is bad-merge debris, not a reason to stop delivering."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        self.write_manifest_files(["", "   "])
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertTrue((self.repo_root / ".claude/shared/core/engineering.md").is_file())
+
+    def test_manifest_entry_inside_managed_root_is_still_deleted(self) -> None:
+        """The containment check must not break legitimate stale cleanup."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        stale = self.repo_root / ".claude/shared/testing/general.md"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text("stale", encoding="utf-8")
+        self.write_manifest_files([".claude/shared/testing/general.md"])
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertFalse(stale.exists())
+
+    def test_payload_file_outside_managed_roots_is_rejected(self) -> None:
+        """Distribution is bounded by the same roots as cleanup, so the two cannot drift."""
+        self.write_payload(".github/workflows/ci.yml", "central ci")
+
+        with self.assertRaisesRegex(SyncError, "outside the managed area"):
+            copy_payload(self.payload_root, self.repo_root)
+
+    @unittest.skipUnless(SYMLINKS_SUPPORTED, "Platform does not permit creating symlinks.")
     def test_symlinked_managed_destination_is_rejected(self) -> None:
         self.write_payload(".claude/shared/core/engineering.md", "engineering")
         external_file = self.workspace / "outside.md"

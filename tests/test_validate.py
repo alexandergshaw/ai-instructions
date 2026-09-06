@@ -95,6 +95,22 @@ class ValidateTests(unittest.TestCase):
 
         self.assertTrue(any("root AGENTS.md" in error for error in errors))
 
+    def test_payload_content_outside_managed_roots_is_rejected(self) -> None:
+        workflows = self.repo_root / "payload/.github/workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yml").write_text("central ci", encoding="utf-8")
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("must live under" in error for error in errors))
+
+    def test_development_loop_in_payload_is_forbidden(self) -> None:
+        (self.repo_root / "payload/DEVELOPMENT-LOOP.md").write_text("forbidden", encoding="utf-8")
+
+        errors = validate_payload(self.repo_root / "payload")
+
+        self.assertTrue(any("DEVELOPMENT-LOOP.md" in error for error in errors))
+
     def test_local_claude_rules_inside_payload_are_forbidden(self) -> None:
         rules_dir = self.repo_root / "payload/.claude/rules"
         rules_dir.mkdir(parents=True)

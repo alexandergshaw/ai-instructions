@@ -8,7 +8,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from sync_payload import MANIFEST_RELATIVE_PATH, get_payload_files, load_previous_manifest, sync_payload
+from sync_payload import MANIFEST_RELATIVE_PATH, SyncError, get_payload_files, load_previous_manifest, sync_payload
 
 REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 REQUIRED_ENV_VARS = ("GH_TOKEN", "SOURCE_VERSION", "BOT_NAME", "BOT_EMAIL")
@@ -314,7 +314,7 @@ def main() -> int:
             message = process_target(target, source_root, env["SOURCE_VERSION"], env)
             print(message)
             successes.append(message)
-        except (OSError, PublishError, json.JSONDecodeError) as exc:
+        except (OSError, PublishError, SyncError, json.JSONDecodeError) as exc:
             message = f"{target.repo}: FAILED - {exc}"
             print(message)
             failures.append(message)
