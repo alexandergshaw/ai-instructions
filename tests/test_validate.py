@@ -36,6 +36,11 @@ class ValidateTests(unittest.TestCase):
         (self.repo_root / "payload/.claude/skills/shared-example/SKILL.md").write_text(
             SKILL_FRONTMATTER.format(name="shared-example"), encoding="utf-8"
         )
+        floor = self.repo_root / "payload/.claude/skills/shared-agent-floor"
+        floor.mkdir(parents=True)
+        (floor / "SKILL.md").write_text(
+            SKILL_FRONTMATTER.format(name="shared-agent-floor"), encoding="utf-8"
+        )
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -105,6 +110,69 @@ class ValidateTests(unittest.TestCase):
         errors = validate_payload(self.repo_root / "payload")
 
         self.assertTrue(any("root AGENTS.md" in error for error in errors))
+
+    def test_missing_required_payload_file_is_rejected(self) -> None:
+        """The floor ships with every distribution, so its absence is a build error."""
+        from validate import validate_required_payload_paths
+
+        (self.repo_root / "payload/.claude/skills/shared-agent-floor/SKILL.md").unlink()
+
+        errors = validate_required_payload_paths(self.repo_root / "payload")
+
+        self.assertTrue(any("Required payload file is missing" in error for error in errors))
+
+    def test_profile_with_one_dead_prefix_is_rejected(self) -> None:
+        from validate import validate_profiles
+
+        targets = self.write_targets({"targets": [{"repo": "owner/repository"}]})
+        profiles = self.repo_root / "config/profiles.json"
+        profiles.write_text(
+            json.dumps(
+                {"profiles": {"mixed": [".claude/shared/core/", ".claude/shared/gone/"]}}
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate_profiles(targets, profiles, self.repo_root / "payload")
+
+        self.assertTrue(any("selects no payload files" in error for error in errors))
+
+    def test_profile_with_an_invalid_prefix_is_rejected(self) -> None:
+        from validate import validate_profiles
+
+        targets = self.write_targets({"targets": [{"repo": "owner/repository"}]})
+        profiles = self.repo_root / "config/profiles.json"
+        profiles.write_text(json.dumps({"profiles": {"broken": [""]}}), encoding="utf-8")
+
+        errors = validate_profiles(targets, profiles, self.repo_root / "payload")
+
+        self.assertTrue(any("invalid prefix" in error for error in errors))
+
+    def test_target_referencing_an_unknown_profile_is_rejected(self) -> None:
+        from validate import validate_profiles
+
+        targets = self.write_targets(
+            {"targets": [{"repo": "owner/repository", "profile": "missing"}]}
+        )
+        profiles = self.repo_root / "config/profiles.json"
+        profiles.write_text(json.dumps({"profiles": {"minimal": [".claude/"]}}), encoding="utf-8")
+
+        errors = validate_profiles(targets, profiles, self.repo_root / "payload")
+
+        self.assertTrue(any("unknown profile" in error for error in errors))
+
+    def test_profile_matching_no_payload_files_is_rejected(self) -> None:
+        from validate import validate_profiles
+
+        targets = self.write_targets({"targets": [{"repo": "owner/repository"}]})
+        profiles = self.repo_root / "config/profiles.json"
+        profiles.write_text(
+            json.dumps({"profiles": {"empty": [".claude/nothing/"]}}), encoding="utf-8"
+        )
+
+        errors = validate_profiles(targets, profiles, self.repo_root / "payload")
+
+        self.assertTrue(any("selects no payload files" in error for error in errors))
 
     def test_skill_without_frontmatter_is_rejected(self) -> None:
         skill = self.repo_root / "payload/.claude/skills/shared-example/SKILL.md"

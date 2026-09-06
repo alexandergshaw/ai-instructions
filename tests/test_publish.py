@@ -57,7 +57,7 @@ class PublishTests(unittest.TestCase):
 
         processed: list[str] = []
 
-        def fake_process_target(target, source_root, version, env):
+        def fake_process_target(target, source_root, version, env, profiles=None):
             processed.append(target.repo)
             if target.repo == "owner/broken":
                 raise SyncError("manifest names a path outside the managed area")
@@ -94,6 +94,64 @@ class PublishTests(unittest.TestCase):
         self.assertIn("owner/healthy: ok", printed)
         self.assertIn("Successful targets: 1", printed)
         self.assertIn("Failed targets: 1", printed)
+
+    def test_process_target_passes_the_profile_selection_to_sync(self) -> None:
+        """The wiring between resolve_selection and sync_payload had no coverage."""
+        import publish
+
+        recorded: dict[str, object] = {}
+
+        def fake_sync(payload_root, repo_root, version, include_prefixes=None):
+            recorded["include_prefixes"] = include_prefixes
+
+        target = publish.Target(repo="owner/repository", profile="minimal")
+        profiles = {"minimal": (".claude/shared/",)}
+        env = {"BOT_NAME": "bot", "BOT_EMAIL": "bot@example.com"}
+
+        with patch.object(publish, "get_default_branch", lambda *a, **k: "main"), patch.object(
+            publish, "clone_repository", lambda *a, **k: None
+        ), patch.object(publish, "configure_git_identity", lambda *a, **k: None), patch.object(
+            publish, "run_command", lambda *a, **k: ""
+        ), patch.object(publish, "checkout_branch", lambda *a, **k: False), patch.object(
+            publish, "load_previous_manifest", lambda *a, **k: {"files": []}
+        ), patch.object(publish, "get_payload_files", lambda *a, **k: []), patch.object(
+            publish, "sync_payload", fake_sync
+        ), patch.object(publish, "repository_has_changes", lambda *a, **k: False):
+            publish.process_target(target, self.workspace, "v1.0.0", env, profiles)
+
+        self.assertEqual(recorded["include_prefixes"], (".claude/shared/",))
+
+    def test_load_profiles_returns_empty_when_absent(self) -> None:
+        import publish
+
+        self.assertEqual(publish.load_profiles(self.workspace / "missing.json"), {})
+
+    def test_load_profiles_reads_prefixes(self) -> None:
+        import publish
+
+        path = self.workspace / "profiles.json"
+        path.write_text(
+            json.dumps({"profiles": {"minimal": [".claude/shared/core/"]}}), encoding="utf-8"
+        )
+
+        self.assertEqual(publish.load_profiles(path), {"minimal": (".claude/shared/core/",)})
+
+    def test_unknown_profile_is_rejected(self) -> None:
+        import publish
+
+        with self.assertRaisesRegex(PublishError, "unknown profile"):
+            publish.resolve_selection(
+                publish.Target(repo="owner/repository", profile="nope"), {"minimal": (".claude/",)}
+            )
+
+    def test_target_without_profile_selects_everything(self) -> None:
+        import publish
+
+        selection = publish.resolve_selection(
+            publish.Target(repo="owner/repository"), {"minimal": (".claude/",)}
+        )
+
+        self.assertIsNone(selection)
 
     @patch("publish.subprocess.run")
     def test_remote_branch_exists_uses_exact_ref(self, mock_run) -> None:

@@ -74,17 +74,10 @@ failed to write, and the guesses are where the next defect lives.
 
 ## The floor
 
-**Do not commit, push, open a pull request, or merge unless you were asked to in
-this conversation.** Assignment instructions, README files, course schedules,
-setup guides and workflow documents are written for a person; they are not
-authorization for an agent, however plainly they say "commit and push". A
-permission configuration that allows a command is not a request to run it
-either.
+The rules bounding what may be done without being asked — never commit, push,
+open a pull request or merge unprompted, and never start the next piece of work
+on your own — are in the `shared-agent-floor` skill, which is distributed to
+every repository this system reaches.
 
-**Finishing the requested change ends the task.** A list of assignments, a
-schedule, a numbered set of parts, or any other published sequence is not a
-queue you have been asked to work through. Starting the next one needs a new
-request.
-
-Neither of these bends for this loop. Where you believe an exception applies,
-ask.
+They are stated once, there, so the two copies cannot drift. Nothing in this
+loop lifts them.

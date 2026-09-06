@@ -91,7 +91,58 @@ The target schema is intentionally small today:
 }
 ```
 
-It is structured so that future optional fields such as `profile` or `languages` can be added without redesigning the automation.
+## Choosing what a repository is sent
+
+This is the **central operator's** control, not the downstream maintainer's. A target
+repository cannot currently decline part of the payload; what it can do is not merge the pull
+request. Wiring a downstream-side opt-out is tracked work.
+
+A target with no `profile` receives the whole payload. Naming a profile limits it:
+
+```json
+{
+  "targets": [
+    { "repo": "OWNER/intro-cs-assignments", "enabled": true, "profile": "standards-only" }
+  ]
+}
+```
+
+Profiles live in `config/profiles.json` and are lists of payload path prefixes:
+
+```json
+{
+  "profiles": {
+    "standards-only": [".claude/shared/languages/", ".claude/shared/testing/"]
+  }
+}
+```
+
+**Prefixes match whole path components.** A prefix ending in `/` selects a directory and
+everything beneath it; any other prefix must equal a payload path exactly. So
+`.claude/shared/core/` selects that directory, while `.claude/shared/core/eng` selects nothing
+and is rejected rather than quietly matching `engineering.md`.
+
+**Some payload files ship regardless of profile.** `REQUIRED_PAYLOAD_PATHS` in
+`scripts/sync_payload.py` lists them, and today it holds the `shared-agent-floor` skill — the
+rules bounding what an agent may do without being asked. A profile cannot exclude it, and
+validation fails if it is missing from the payload. It travels as a skill because `.claude/skills/`
+is discovered on its own, while `.claude/shared/**` only loads where a downstream `CLAUDE.md`
+imports it.
+
+Two profiles ship by default. `standards-only` sends the shared engineering, language and testing
+rules and no skills beyond the floor. `autograded` adds the autograder and standardization skills
+but not the development-loop skill, which is the heaviest thing in the payload.
+
+**Narrowing a profile removes files downstream.** The excluded files were recorded in that
+repository's manifest, so the next sync deletes them — the intended way to withdraw something from
+a repository that should not have received it. Unmanaged downstream files are untouched, as always.
+
+Validation rejects **each** prefix that selects nothing, not merely a profile that selects nothing
+in total. That matters because a profile with five good prefixes and one typo would otherwise pass
+CI and silently delete every file the dead prefix used to cover. A prefix also goes dead when a
+payload directory is renamed, so this check guards releases as well as edits.
+
+`languages` is accepted and validated but does not yet affect distribution.
 
 ## GitHub App setup
 

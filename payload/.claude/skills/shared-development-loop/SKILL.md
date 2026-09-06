@@ -14,6 +14,13 @@ two roles in one agent, and the non-negotiables — are in
 `roles.md`. If the agent running this loop can dispatch subagents,
 `subagent-execution.md` carries the mechanics and the brief template.
 
+## The floor
+
+The `shared-agent-floor` skill bounds what may be done without being asked.
+Running this loop does not lift any of it — in particular, no stage here
+authorizes committing, pushing, opening a pull request, merging, or starting the
+next piece of work.
+
 ## 0. Before anything else
 
 **0a. Compare the request against what is already done, queued, or in flight.**
@@ -54,8 +61,8 @@ effect immediately — it is not a queued request.
 choosing how to chunk the work, are the coordinator's to decide.
 
 Nothing else is. Committing, pushing, opening or merging a pull request, and
-starting a further unit of work all sit behind the floor in
-`.claude/shared/core/development-loop.md`, which this loop does not lift.
+starting a further unit of work all sit behind the `shared-agent-floor` skill,
+which this loop does not lift.
 
 ## 1. Write the acceptance criteria first
 

@@ -131,6 +131,40 @@ def load_targets(config_path: Path) -> list[Target]:
     return targets
 
 
+def load_profiles(config_path: Path) -> dict[str, tuple[str, ...]]:
+    """Read config/profiles.json. Absent means every target receives the whole payload."""
+    if not config_path.exists():
+        return {}
+
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise PublishError("config/profiles.json must contain a JSON object.")
+
+    raw_profiles = data.get("profiles")
+    if not isinstance(raw_profiles, dict):
+        raise PublishError("config/profiles.json must contain a 'profiles' object.")
+
+    profiles: dict[str, tuple[str, ...]] = {}
+    for name, prefixes in raw_profiles.items():
+        if not isinstance(prefixes, list) or not all(isinstance(item, str) for item in prefixes):
+            raise PublishError(f"Profile {name} must be an array of path prefixes.")
+        if not prefixes:
+            raise PublishError(f"Profile {name} must list at least one path prefix.")
+        profiles[name] = tuple(prefixes)
+    return profiles
+
+
+def resolve_selection(
+    target: Target, profiles: dict[str, tuple[str, ...]]
+) -> tuple[str, ...] | None:
+    """Return the payload prefixes this target receives, or None for the whole payload."""
+    if target.profile is None:
+        return None
+    if target.profile not in profiles:
+        raise PublishError(f"Target {target.repo} names an unknown profile: {target.profile}")
+    return profiles[target.profile]
+
+
 def get_default_branch(repo: str, env: dict[str, str]) -> str:
     return run_command(["gh", "api", f"repos/{repo}", "--jq", ".default_branch"], env=env)
 
@@ -266,8 +300,15 @@ def create_pr(repo: str, branch_name: str, base_branch: str, version: str, env: 
     )
 
 
-def process_target(target: Target, source_root: Path, version: str, env: dict[str, str]) -> str:
+def process_target(
+    target: Target,
+    source_root: Path,
+    version: str,
+    env: dict[str, str],
+    profiles: dict[str, tuple[str, ...]] | None = None,
+) -> str:
     validate_repo_name(target.repo)
+    selection = resolve_selection(target, profiles or {})
     default_branch = get_default_branch(target.repo, env)
     branch_name = f"automation/claude-instructions-{safe_version(version)}"
 
@@ -278,8 +319,8 @@ def process_target(target: Target, source_root: Path, version: str, env: dict[st
         run_command(["git", "checkout", default_branch], cwd=repo_root, env=env)
         branch_exists = checkout_branch(repo_root, branch_name, default_branch, env)
         previous_manifest = load_previous_manifest(repo_root)
-        current_payload_files = get_payload_files(source_root / "payload")
-        sync_payload(source_root / "payload", repo_root, version)
+        current_payload_files = get_payload_files(source_root / "payload", selection)
+        sync_payload(source_root / "payload", repo_root, version, selection)
 
         if not repository_has_changes(repo_root, env):
             return f"{target.repo}: no changes"
@@ -302,6 +343,7 @@ def main() -> int:
     env = require_environment()
     configure_git_transport_auth(env)
     targets = [target for target in load_targets(source_root / "config" / "targets.json") if target.enabled]
+    profiles = load_profiles(source_root / "config" / "profiles.json")
 
     if not targets:
         print("No enabled targets found. Nothing to publish.")
@@ -311,7 +353,7 @@ def main() -> int:
     failures: list[str] = []
     for target in targets:
         try:
-            message = process_target(target, source_root, env["SOURCE_VERSION"], env)
+            message = process_target(target, source_root, env["SOURCE_VERSION"], env, profiles)
             print(message)
             successes.append(message)
         except (OSError, PublishError, SyncError, json.JSONDecodeError) as exc:

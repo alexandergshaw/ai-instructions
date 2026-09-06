@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "standards-only": [
+      ".claude/shared/core/",
+      ".claude/shared/languages/",
+      ".claude/shared/testing/"
+    ],
+    "autograded": [
+      ".claude/shared/",
+      ".claude/skills/shared-build-autograder/",
+      ".claude/skills/shared-standardize-repository/"
+    ]
+  }
+}

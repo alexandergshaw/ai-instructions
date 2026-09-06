@@ -6,7 +6,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from sync_payload import MANAGED_ROOTS, managed_area_description
+from sync_payload import (
+    MANAGED_ROOTS,
+    REQUIRED_PAYLOAD_PATHS,
+    managed_area_description,
+    selection_prefix_error,
+)
 
 REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 FORBIDDEN_FILENAMES = {
@@ -174,6 +179,17 @@ def validate_skill_frontmatter(skill_dir: Path, payload_root: Path) -> list[str]
     return errors
 
 
+def validate_required_payload_paths(payload_root: Path) -> list[str]:
+    """Every distribution carries these regardless of profile, so they must exist."""
+    if not payload_root.is_dir():
+        return []
+    return [
+        f"Required payload file is missing: {required}"
+        for required in REQUIRED_PAYLOAD_PATHS
+        if not (payload_root / required).is_file()
+    ]
+
+
 def validate_payload(payload_root: Path) -> list[str]:
     errors: list[str] = []
     if not payload_root.is_dir():
@@ -237,6 +253,68 @@ def validate_payload(payload_root: Path) -> list[str]:
     return errors
 
 
+def _selects_any(prefix: str, payload_files: list[str]) -> bool:
+    if prefix.endswith("/"):
+        return any(path.startswith(prefix) for path in payload_files)
+    return prefix in payload_files
+
+
+def validate_profiles(targets_path: Path, profiles_path: Path, payload_root: Path) -> list[str]:
+    """Check that every named profile exists and actually selects something."""
+    errors: list[str] = []
+    profiles: dict[str, list[str]] = {}
+
+    if profiles_path.exists():
+        try:
+            data = load_json_file(profiles_path)
+        except json.JSONDecodeError as exc:
+            return [f"Failed to parse {profiles_path.name}: {exc}"]
+        if not isinstance(data, dict) or not isinstance(data.get("profiles"), dict):
+            return ["config/profiles.json must contain a 'profiles' object."]
+        profiles = data["profiles"]
+
+    payload_files = []
+    if payload_root.is_dir():
+        payload_files = [
+            path.relative_to(payload_root).as_posix()
+            for path in payload_root.rglob("*")
+            if path.is_file()
+        ]
+
+    for name, prefixes in sorted(profiles.items()):
+        if not isinstance(prefixes, list) or not all(isinstance(item, str) for item in prefixes):
+            errors.append(f"Profile {name} must be an array of path prefixes.")
+            continue
+        if not prefixes:
+            errors.append(f"Profile {name} must list at least one path prefix.")
+            continue
+        for prefix in prefixes:
+            reason = selection_prefix_error(prefix)
+            if reason is not None:
+                errors.append(f"Profile {name} has an invalid prefix {prefix!r}: {reason}")
+                continue
+            if payload_files and not _selects_any(prefix, payload_files):
+                errors.append(f"Profile {name} prefix {prefix!r} selects no payload files.")
+
+        if payload_files and not any(_selects_any(prefix, payload_files) for prefix in prefixes):
+            errors.append(f"Profile {name} selects no payload files.")
+
+    try:
+        targets_data = load_json_file(targets_path)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return errors
+
+    targets = targets_data.get("targets") if isinstance(targets_data, dict) else None
+    for target in targets or []:
+        if not isinstance(target, dict):
+            continue
+        profile = target.get("profile")
+        if isinstance(profile, str) and profile not in profiles:
+            errors.append(f"Target {target.get('repo')} names an unknown profile: {profile}")
+
+    return errors
+
+
 def validate_control_plane(repo_root: Path) -> list[str]:
     errors: list[str] = []
     required_files = [
@@ -259,7 +337,15 @@ def validate_repository(repo_root: Path) -> list[str]:
     errors: list[str] = []
     errors.extend(validate_control_plane(repo_root))
     errors.extend(validate_targets_config(repo_root / "config" / "targets.json"))
+    errors.extend(
+        validate_profiles(
+            repo_root / "config" / "targets.json",
+            repo_root / "config" / "profiles.json",
+            repo_root / "payload",
+        )
+    )
     errors.extend(validate_payload(repo_root / "payload"))
+    errors.extend(validate_required_payload_paths(repo_root / "payload"))
     return errors
 
 

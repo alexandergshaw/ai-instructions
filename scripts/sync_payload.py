@@ -17,6 +17,21 @@ MANIFEST_SOURCE = "central-claude-instructions"
 # with distribution.
 MANAGED_ROOTS = (".claude",)
 
+# Every distribution carries this, whatever else a selection excludes. It is the rule that
+# bounds what an agent may do unasked, and it arrives through .claude/skills/, which does not
+# depend on a downstream repository importing anything.
+REQUIRED_PAYLOAD_PATHS = (".claude/skills/shared-agent-floor/SKILL.md",)
+
+# Every distribution carries this, whatever else a selection excludes. It is the rule that
+# bounds what an agent may do unasked, and it arrives through .claude/skills/, which does not
+# depend on a downstream repository importing anything.
+REQUIRED_PAYLOAD_PATHS = (".claude/skills/shared-agent-floor/SKILL.md",)
+
+# Every distribution carries this, whatever else a selection excludes. It is the rule that
+# bounds what an agent may do unasked, and it arrives through .claude/skills/, which does not
+# depend on a downstream repository importing anything.
+REQUIRED_PAYLOAD_PATHS = (".claude/skills/shared-agent-floor/SKILL.md",)
+
 
 class SyncError(RuntimeError):
     """Raised when synchronization cannot proceed safely."""
@@ -37,6 +52,38 @@ def _build_managed_path(relative_path: Path, repo_root: Path) -> Path:
 
 def managed_area_description() -> str:
     return ", ".join(f"{root}/" for root in MANAGED_ROOTS)
+
+
+def _matches_any_prefix(relative_path: Path, prefixes: tuple[str, ...]) -> bool:
+    """Match on whole path components, never on a bare character prefix.
+
+    A prefix ending in "/" selects a directory and everything under it. Any other prefix
+    must equal a full payload path. Character-prefix matching would let ".claude/shared/core/eng"
+    silently select engineering.md, and "" select the entire payload.
+    """
+    posix_path = relative_path.as_posix()
+    for prefix in prefixes:
+        if prefix.endswith("/"):
+            if posix_path.startswith(prefix):
+                return True
+        elif posix_path == prefix:
+            return True
+    return False
+
+
+def selection_prefix_error(prefix: str) -> str | None:
+    """Return why a selection prefix is unusable, or None when it is well formed."""
+    if not prefix.strip():
+        return "prefix is empty"
+    if prefix != prefix.strip():
+        return "prefix has leading or trailing whitespace"
+    if "\\" in prefix:
+        return "prefix must use forward slashes"
+    if prefix.startswith("/"):
+        return "prefix must be relative to the payload root"
+    if any(part in {"..", "."} for part in prefix.split("/")):
+        return "prefix must not contain '.' or '..'"
+    return None
 
 
 def _is_within_managed_roots(relative_path: Path) -> bool:
@@ -101,7 +148,14 @@ def load_previous_manifest(repo_root: Path) -> dict[str, Any]:
     return data
 
 
-def get_payload_files(payload_root: Path) -> list[Path]:
+def get_payload_files(
+    payload_root: Path, include_prefixes: tuple[str, ...] | None = None
+) -> list[Path]:
+    """List payload files, optionally limited to those under one of include_prefixes.
+
+    A prefix is matched against the payload-relative POSIX path, so ".claude/shared/"
+    selects everything beneath it. None selects the whole payload.
+    """
     if not payload_root.is_dir():
         raise SyncError(f"Payload root does not exist: {payload_root}")
 
@@ -109,8 +163,28 @@ def get_payload_files(payload_root: Path) -> list[Path]:
     for path in sorted(payload_root.rglob("*")):
         if path.is_symlink():
             raise SyncError(f"Payload contains a symlink: {path}")
-        if path.is_file():
-            files.append(path.relative_to(payload_root))
+        if not path.is_file():
+            continue
+        relative_path = path.relative_to(payload_root)
+        if (
+            include_prefixes is not None
+            and relative_path.as_posix() not in REQUIRED_PAYLOAD_PATHS
+            and not _matches_any_prefix(relative_path, include_prefixes)
+        ):
+            continue
+        files.append(relative_path)
+
+    if include_prefixes is not None:
+        # Checked per prefix, not per selection. A profile with five good prefixes and one typo
+        # would otherwise pass silently and delete every file the dead prefix used to select,
+        # because those files are still recorded in the downstream manifest.
+        dead = [
+            prefix
+            for prefix in include_prefixes
+            if not any(_matches_any_prefix(path, (prefix,)) for path in files)
+        ]
+        if dead:
+            raise SyncError(f"Selection prefixes match no payload files: {dead}")
     return files
 
 
@@ -161,9 +235,11 @@ def remove_stale_files(
     return skipped
 
 
-def copy_payload(payload_root: Path, repo_root: Path) -> list[Path]:
+def copy_payload(
+    payload_root: Path, repo_root: Path, include_prefixes: tuple[str, ...] | None = None
+) -> list[Path]:
     copied_files: list[Path] = []
-    for relative_path in get_payload_files(payload_root):
+    for relative_path in get_payload_files(payload_root, include_prefixes):
         if not _is_within_managed_roots(relative_path):
             raise SyncError(
                 f"Payload file is outside the managed area ({managed_area_description()}): "
@@ -195,18 +271,31 @@ def write_manifest(repo_root: Path, version: str, files: list[Path]) -> None:
     manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def sync_payload(payload_root: Path, repo_root: Path, version: str) -> None:
+def sync_payload(
+    payload_root: Path,
+    repo_root: Path,
+    version: str,
+    include_prefixes: tuple[str, ...] | None = None,
+) -> None:
+    """Synchronize the payload into repo_root.
+
+    include_prefixes limits distribution to part of the payload. Narrowing it between runs
+    removes the newly-excluded files downstream, because they are still recorded in the
+    previous manifest and are absent from the current selection.
+    """
     previous_manifest = load_previous_manifest(repo_root)
     previous_files = [str(item) for item in previous_manifest.get("files", [])]
-    current_files = get_payload_files(payload_root)
+    current_files = get_payload_files(payload_root, include_prefixes)
 
     remove_stale_files(previous_files, current_files, repo_root)
-    copied_files = copy_payload(payload_root, repo_root)
+    copied_files = copy_payload(payload_root, repo_root, include_prefixes)
     write_manifest(repo_root, version, copied_files)
 
 
 __all__ = [
     "MANAGED_ROOTS",
+    "REQUIRED_PAYLOAD_PATHS",
+    "selection_prefix_error",
     "managed_area_description",
     "MANIFEST_RELATIVE_PATH",
     "MANIFEST_SOURCE",

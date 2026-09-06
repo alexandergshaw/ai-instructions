@@ -9,7 +9,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from sync_payload import MANIFEST_RELATIVE_PATH, MANIFEST_SOURCE, SyncError, copy_payload, sync_payload  # noqa: E402
+from sync_payload import (  # noqa: E402
+    MANIFEST_RELATIVE_PATH,
+    MANIFEST_SOURCE,
+    SyncError,
+    copy_payload,
+    get_payload_files,
+    sync_payload,
+)
 
 
 def _detect_symlink_support() -> bool:
@@ -243,6 +250,131 @@ class SyncPayloadTests(unittest.TestCase):
 
         with self.assertRaisesRegex(SyncError, "outside the managed area"):
             copy_payload(self.payload_root, self.repo_root)
+
+    def test_no_selection_distributes_the_whole_payload(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        self.write_payload(".claude/skills/shared-loop/SKILL.md", "loop")
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertTrue((self.repo_root / ".claude/shared/core/engineering.md").is_file())
+        self.assertTrue((self.repo_root / ".claude/skills/shared-loop/SKILL.md").is_file())
+
+    def test_selection_limits_what_is_distributed(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        self.write_payload(".claude/skills/shared-loop/SKILL.md", "loop")
+
+        sync_payload(
+            self.payload_root, self.repo_root, "v1.0.0", include_prefixes=(".claude/shared/",)
+        )
+
+        self.assertTrue((self.repo_root / ".claude/shared/core/engineering.md").is_file())
+        self.assertFalse((self.repo_root / ".claude/skills/shared-loop/SKILL.md").exists())
+        self.assertEqual(self.read_manifest()["files"], [".claude/shared/core/engineering.md"])
+
+    def test_narrowing_the_selection_removes_previously_distributed_files(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        self.write_payload(".claude/skills/shared-loop/SKILL.md", "loop")
+        unmanaged = self.repo_root / ".claude/local/custom.md"
+        unmanaged.parent.mkdir(parents=True, exist_ok=True)
+        unmanaged.write_text("downstream owned", encoding="utf-8")
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+        self.assertTrue((self.repo_root / ".claude/skills/shared-loop/SKILL.md").is_file())
+
+        sync_payload(
+            self.payload_root, self.repo_root, "v1.1.0", include_prefixes=(".claude/shared/",)
+        )
+
+        self.assertFalse((self.repo_root / ".claude/skills/shared-loop/SKILL.md").exists())
+        self.assertTrue((self.repo_root / ".claude/shared/core/engineering.md").is_file())
+        self.assertEqual(unmanaged.read_text(encoding="utf-8"), "downstream owned")
+
+    def test_selection_is_idempotent(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        self.write_payload(".claude/skills/shared-loop/SKILL.md", "loop")
+        selection = (".claude/shared/",)
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0", include_prefixes=selection)
+        first = self.read_manifest()
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0", include_prefixes=selection)
+
+        self.assertEqual(first, self.read_manifest())
+
+    def test_get_payload_files_filters_by_prefix(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        self.write_payload(".claude/skills/shared-loop/SKILL.md", "loop")
+
+        selected = get_payload_files(self.payload_root, include_prefixes=(".claude/skills/",))
+
+        self.assertEqual([path.as_posix() for path in selected], [".claude/skills/shared-loop/SKILL.md"])
+
+    def test_selection_matching_nothing_is_rejected(self) -> None:
+        """A selection that ships nothing is a configuration mistake, not an empty sync."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+
+        with self.assertRaisesRegex(SyncError, "match no payload files"):
+            sync_payload(
+                self.payload_root, self.repo_root, "v1.0.0", include_prefixes=(".claude/nothing/",)
+            )
+
+    def test_a_dead_prefix_is_rejected_even_when_another_matches(self) -> None:
+        """One typo must not silently drop the files its prefix used to select."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        self.write_payload(".claude/shared/languages/python.md", "python")
+
+        with self.assertRaisesRegex(SyncError, "match no payload files"):
+            sync_payload(
+                self.payload_root,
+                self.repo_root,
+                "v1.0.0",
+                include_prefixes=(".claude/shared/core/", ".claude/shared/langauges/"),
+            )
+
+    def test_a_dead_selection_deletes_nothing_from_a_populated_repository(self) -> None:
+        """The guard must run before any deletion, not merely raise eventually."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        self.write_payload(".claude/shared/languages/python.md", "python")
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+        before = sorted(
+            path.relative_to(self.repo_root).as_posix()
+            for path in self.repo_root.rglob("*")
+            if path.is_file()
+        )
+        manifest_before = self.read_manifest()
+
+        with self.assertRaises(SyncError):
+            sync_payload(
+                self.payload_root, self.repo_root, "v1.0.0", include_prefixes=(".claude/gone/",)
+            )
+
+        after = sorted(
+            path.relative_to(self.repo_root).as_posix()
+            for path in self.repo_root.rglob("*")
+            if path.is_file()
+        )
+        self.assertEqual(before, after)
+        self.assertEqual(manifest_before, self.read_manifest())
+
+    def test_prefixes_match_whole_path_components(self) -> None:
+        """A character prefix must not select a file it merely shares letters with."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+
+        with self.assertRaisesRegex(SyncError, "match no payload files"):
+            get_payload_files(self.payload_root, include_prefixes=(".claude/shared/core/eng",))
+
+    def test_the_floor_is_distributed_whatever_the_selection_excludes(self) -> None:
+        self.write_payload(".claude/skills/shared-agent-floor/SKILL.md", "the floor")
+        self.write_payload(".claude/shared/languages/python.md", "python")
+
+        sync_payload(
+            self.payload_root,
+            self.repo_root,
+            "v1.0.0",
+            include_prefixes=(".claude/shared/languages/",),
+        )
+
+        self.assertTrue((self.repo_root / ".claude/skills/shared-agent-floor/SKILL.md").is_file())
 
     @unittest.skipUnless(SYMLINKS_SUPPORTED, "Platform does not permit creating symlinks.")
     def test_symlinked_managed_destination_is_rejected(self) -> None:
