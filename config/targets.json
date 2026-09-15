@@ -1,8 +1,8 @@
 {
   "targets": [
     {
-      "repo": "YOUR-GITHUB-OWNER/example-repository",
-      "enabled": false
+      "repo": "alexandergshaw/instructions-sync-test",
+      "enabled": true
     }
   ]
 }
