@@ -22,16 +22,6 @@ MANAGED_ROOTS = (".claude",)
 # depend on a downstream repository importing anything.
 REQUIRED_PAYLOAD_PATHS = (".claude/skills/shared-agent-floor/SKILL.md",)
 
-# Every distribution carries this, whatever else a selection excludes. It is the rule that
-# bounds what an agent may do unasked, and it arrives through .claude/skills/, which does not
-# depend on a downstream repository importing anything.
-REQUIRED_PAYLOAD_PATHS = (".claude/skills/shared-agent-floor/SKILL.md",)
-
-# Every distribution carries this, whatever else a selection excludes. It is the rule that
-# bounds what an agent may do unasked, and it arrives through .claude/skills/, which does not
-# depend on a downstream repository importing anything.
-REQUIRED_PAYLOAD_PATHS = (".claude/skills/shared-agent-floor/SKILL.md",)
-
 
 class SyncError(RuntimeError):
     """Raised when synchronization cannot proceed safely."""
