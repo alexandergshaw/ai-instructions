@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -520,6 +521,65 @@ class SyncPayloadTests(unittest.TestCase):
         sync_payload(self.payload_root, self.repo_root, "v1.0.0")
 
         self.assertFalse(stale.exists())
+
+    # --- BL-15: the deletion path's symlink refusals. A copy-path symlink test already
+    # existed; the deletion path had none on any platform. -----------------------------
+
+    @unittest.skipIf(os.name == "nt", "Windows is the platform these guards legitimately skip on.")
+    def test_symlinks_can_actually_be_created_on_posix(self) -> None:
+        """BL-15 closes only if the symlink tests RUN somewhere. CI is Linux; prove it there.
+
+        If symlink creation ever stops working on the runner, every symlink guard in this file
+        turns into a skip and `OK (skipped=N)` still reads as green. This asserts the real
+        precondition by doing it, rather than asserting a module-level probe result.
+        """
+        link = self.workspace / "probe-link.md"
+        target = self.workspace / "probe-target.md"
+        target.write_text("probe", encoding="utf-8")
+
+        link.symlink_to(target)
+
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.read_text(encoding="utf-8"), "probe")
+
+    @unittest.skipUnless(SYMLINKS_SUPPORTED, "Platform does not permit creating symlinks.")
+    def test_stale_entry_that_is_a_symlink_is_refused_not_followed(self) -> None:
+        """Deleting a symlink the manifest names would be ordinary. Following it is not.
+
+        The manifest is untrusted input, so an entry pointing outside the repository must not
+        become a way to unlink a file the central system was never given authority over.
+        """
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        external_file = self.workspace / "outside.md"
+        external_file.write_text("outside", encoding="utf-8")
+        stale_link = self.repo_root / ".claude/shared/legacy/old.md"
+        stale_link.parent.mkdir(parents=True, exist_ok=True)
+        stale_link.symlink_to(external_file)
+        self.write_manifest_files([".claude/shared/legacy/old.md"])
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertTrue(external_file.is_file())
+        self.assertEqual(external_file.read_text(encoding="utf-8"), "outside")
+        self.assertTrue(stale_link.is_symlink())
+        # Delivery continued, and the manifest stopped claiming what it could not vouch for.
+        self.assertTrue((self.repo_root / ".claude/shared/core/engineering.md").is_file())
+        self.assertNotIn(".claude/shared/legacy/old.md", self.read_manifest()["files"])
+
+    @unittest.skipUnless(SYMLINKS_SUPPORTED, "Platform does not permit creating symlinks.")
+    def test_stale_entry_under_a_symlinked_parent_is_refused(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        external_dir = self.workspace / "elsewhere"
+        external_dir.mkdir()
+        (external_dir / "old.md").write_text("outside", encoding="utf-8")
+        managed_parent = self.repo_root / ".claude/shared/legacy"
+        managed_parent.parent.mkdir(parents=True, exist_ok=True)
+        managed_parent.symlink_to(external_dir, target_is_directory=True)
+        self.write_manifest_files([".claude/shared/legacy/old.md"])
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertTrue((external_dir / "old.md").is_file())
 
     @unittest.skipUnless(SYMLINKS_SUPPORTED, "Platform does not permit creating symlinks.")
     def test_symlinked_managed_destination_is_rejected(self) -> None:

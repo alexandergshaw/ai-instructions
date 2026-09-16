@@ -48,17 +48,6 @@ needs re-verification before work).
 
 
 
-### BL-03 — a repository that gitignores `.claude/` is reported as a success while receiving nothing · `fix` · T3
-
-`repository_has_changes` sees a clean tree, `process_target` returns "no changes", and the target is
-counted among the successes — indefinitely.
-
-- **Evidence:** `grep -n "def repository_has_changes" -A3 scripts/publish.py`; `grep -n "no changes" scripts/publish.py`. As of `b14d7fa`.
-- **Why it matters:** a green run that delivered nothing is indistinguishable from a green run that worked.
-- **Done when:** a target whose managed paths are ignored is reported distinctly from one that was already up to date, **and** a genuinely unchanged target is still reported as "no changes" rather than as an error.
-- **Found by:** Downstream advocate. **First seen:** 2026-09-06.
-- **Status:** open
-
 ## Workflow security
 
 
@@ -80,11 +69,23 @@ A tag repoint by a third party would reach a workflow holding the token from BL-
 
 ## The record
 
-### BL-14 — "the gates" is used in distributed prose without being defined downstream · `fix` · T2
+### BL-21 — the payload has moved MAJOR since `v1.0.0` and no release has been cut · `decision` · T2
 
-- **Evidence:** `grep -rn "the gates" payload/`. As of `b14d7fa`.
-- **Done when:** each use either names what the gates are for that repository, or defers to the repository's own validation, test and build checks. No distributed instruction refers to an undefined term.
-- **Found by:** Payload prose seat. **First seen:** 2026-09-15.
+`checks.md` now defines "The gates" and imposes a **mandatory** obligation on every downstream agent
+running the loop: name the exact commands, quote their output, and skip rather than substitute when
+the repository defines none. `AGENTS.md` classes materially different mandatory downstream agent
+behavior as MAJOR, not MINOR — MINOR covers new **optional** shared instructions.
+
+It does **not** ride the existing tag. `v2.0.0` names a payload snapshot that is already shipped and
+sits on an ancestor commit; letting this ride it would make one version string denote two materially
+different payloads.
+
+- **Evidence:** `git merge-base --is-ancestor v2.0.0 HEAD` → true, with commits past it;
+  `git diff v2.0.0 -- payload/.claude/skills/shared-development-loop/checks.md`.
+- **Done when:** the owner rules on the next version string and explicitly requests a release.
+  `VERSION` is deliberately unedited and no tag was created: `DEVELOPMENT-LOOP.md` step 7 makes
+  release explicit-request-only and never a side effect of finishing a change.
+- **Found by:** Classification seat. **First seen:** 2026-09-15.
 - **Status:** open
 
 ### BL-17 — deduplicate the four rules BL-13 identified · `fix` · T2
@@ -100,15 +101,39 @@ Each is stated twice in the payload. A rule in two files drifts — the payload 
 
 ## Test coverage
 
-### BL-15 — the symlink refusals on the deletion path have no test on any platform · `fix` · T2
+### BL-19 — no test exercises `process_target` end to end against a real remote · `investigation` · T3
 
-The one symlink test covers the copy path and skips on Windows. The deletion-path guards are
-untested everywhere, including on the Linux CI runner.
+Two defects lived in `process_target` undetected while the suite stayed green: an unbound `subject`
+that raised `NameError` on every new-PR path, and a visibility check placed in the wrong branch. The
+tests added since stub the network edges — cloning, pushing and the `gh` calls — so anything wrong
+in what is actually sent to `gh` still surfaces for the first time during a real distribution run.
 
-- **Evidence:** `grep -rn "symlink" tests/` → a single test, decorated `skipUnless(SYMLINKS_SUPPORTED)`, exercising `copy_payload`. As of `b14d7fa`.
-- **Done when:** a POSIX-gated test proves a symlinked stale manifest entry is refused rather than followed, **and** it actually executes on the Linux runner rather than skipping there too.
-- **Found by:** Diff seat, deletion-bounds review. **First seen:** 2026-09-06.
+- **Evidence:** `grep -n "def _run_process_target" -A12 tests/test_publish.py` shows which edges are
+  stubbed. As of the working tree that closed `BL-03`.
+- **Why it matters:** this is the function that pushes branches and opens pull requests in
+  repositories this project does not own.
+- **Done when:** it is recorded whether a dedicated throwaway GitHub repository should carry an
+  integration check, or whether the stubbed seam plus the External contract seat is the accepted
+  bound. No production, classroom or active repository is used either way.
+- **Found by:** Remediation, BL-03 closure. **First seen:** 2026-09-15.
 - **Status:** open
+
+### BL-20 — could `validate.py` catch a defined term used in `payload/` without its definition · `investigation` · T2
+
+`BL-14` was closed once while two bare uses of "the gates" remained, and a third sat in
+`engineering.md` outside the skill entirely. The payload-prose exemption from writing tests first
+was claimed on the grounds that there is no testable surface; a rule of this shape is exactly that
+surface.
+
+- **Evidence:** the uses `BL-14` missed on its first pass: `SKILL.md` step 14 and the step 1
+  criterion sentence, plus `engineering.md`. As of the working tree that closed `BL-14`.
+- **Done when:** it is recorded whether such a rule is worth building — including what it would cost
+  in false positives against ordinary English, and whether the term list would be maintained by hand
+  — or why it is not. **No rule is built as part of this entry.**
+- **Found by:** two review seats, `BL-14` review. **First seen:** 2026-09-15.
+- **Status:** open
+
+
 
 ---
 
@@ -176,6 +201,14 @@ have.
 - **Evidence:** `grep -n "PR_BODY_TEMPLATE" -A20 scripts/publish.py`; `grep -n "chore(ai)" scripts/publish.py`. As of `b14d7fa`.
 - **Done when:** the body lists added, modified and removed managed paths for that target, **and** names the profile that produced the selection, **and** a target receiving no changes still opens no PR.
 - **Found by:** Downstream advocate, repeatedly across three reviews. **First seen:** 2026-09-06.
+- **Correction (2026-09-15):** this closure was partly false. `build_commit_subject` was written but
+  never called: `process_target` passed `title=subject` to `create_pr` without ever binding
+  `subject`, so **every new-pull-request path raised `NameError`** — and because `NameError` is not
+  in the per-target `except` tuple, it aborted the whole run rather than failing one target, against
+  `AGENTS.md`'s rule that one downstream failure must not prevent attempts against the rest. The
+  name is now bound from the computed `changes` and passed to both `create_pr` and `commit_changes`,
+  so the commit subject is used rather than the old static one. The `except` tuple was deliberately
+  **not** widened: catching a programming error would hide the next one.
 - **Status:** done — `build_pr_body` and `build_commit_subject` describe the specific change: added, updated and removed paths, the profile the target receives, and any path overwritten that no manifest claimed. A first delivery says so rather than calling itself an update, and the body no longer cites a manifest that arrives in the same pull request. The subject distinguishes an install, an update and a removal-only change.
 
 
@@ -279,3 +312,60 @@ document those two point at.
 - **Status:** done — `scripts/validate.py` `validate_control_plane` now lists `DEVELOPMENT-LOOP.md`
   and `BACKLOG.md`; proven by `tests/test_validate.py::test_missing_development_loop_is_rejected`
   and `::test_missing_backlog_is_rejected`, both of which failed before the rule existed.
+
+### BL-03 — a repository that gitignores `.claude/` is reported as a success while receiving nothing · `fix` · T3
+
+`repository_has_changes` sees a clean tree, `process_target` returns "no changes", and the target is
+counted among the successes — indefinitely.
+
+- **Evidence:** `grep -n "def repository_has_changes" -A3 scripts/publish.py`; `grep -n "no changes" scripts/publish.py`. As of `b14d7fa`.
+- **Why it matters:** a green run that delivered nothing is indistinguishable from a green run that worked.
+- **Done when:** a target whose managed paths are ignored is reported distinctly from one that was already up to date, **and** a genuinely unchanged target is still reported as "no changes" rather than as an error.
+- **Found by:** Downstream advocate. **First seen:** 2026-09-06.
+- **Status:** done — reported as a **distinct third outcome**, not as a failure. `process_target`
+  returns `DeliveredNothing`; `main` prints a "Delivered nothing" bucket separate from successes and
+  failures and does not set a non-zero exit code. Failing instead would turn one repository's
+  deliberate, documented choice to exclude `.claude/` into a permanently red scheduled job, and a
+  job nobody reads hides the next genuine failure — so the bug BL-03 names (counted as a success) is
+  closed without trading it for permanent unactionable noise. The check runs unconditionally before
+  the clean-tree branch, so the mixed case — one unignored path making the tree dirty — is caught
+  too, rather than reaching `git add` and producing git's "use -f" hint against a repository that
+  asked for this area not to be committed. Proven by
+  `test_a_fully_ignored_target_pushes_nothing_and_opens_no_pull_request`,
+  `test_a_partially_ignored_target_is_caught_even_though_the_tree_is_dirty`,
+  `test_delivering_nothing_is_a_third_bucket_that_does_not_fail_the_run`, with
+  `test_a_target_that_tracks_everything_still_opens_a_pull_request` as the control and
+  `test_a_repository_that_tracks_the_managed_area_is_not_flagged` keeping a genuinely unchanged
+  target on "no changes".
+
+### BL-14 — "the gates" is used in distributed prose without being defined downstream · `fix` · T2
+
+- **Evidence:** `grep -rn "the gates" payload/`. As of `b14d7fa`.
+- **Done when:** each use either names what the gates are for that repository, or defers to the repository's own validation, test and build checks. No distributed instruction refers to an undefined term.
+- **Found by:** Payload prose seat. **First seen:** 2026-09-15.
+- **Status:** done — `checks.md` defines "The gates" once, as the commands the repository itself
+  defines as required, with a first-match-wins source order that says what to do when sources
+  disagree and how to scope in a multi-project repository. Every other use points at that file and
+  restates nothing (`grep -rn "gates" payload/` → each hit either is in `checks.md` or carries the
+  `checks.md` pointer). `engineering.md` is always-on standards prose that the skill may not be
+  loaded alongside, so it no longer uses the term at all: it names the checks in plain words and
+  depends on no skill file. The "if the repository defines none" clause no longer tells an agent to
+  substitute a check — that contradicted the absent-dependency invariant in `SKILL.md` — and now
+  says skip and report.
+
+### BL-15 — the symlink refusals on the deletion path have no test on any platform · `fix` · T2
+
+The one symlink test covers the copy path and skips on Windows. The deletion-path guards are
+untested everywhere, including on the Linux CI runner.
+
+- **Evidence:** `grep -rn "symlink" tests/` → a single test, decorated `skipUnless(SYMLINKS_SUPPORTED)`, exercising `copy_payload`. As of `b14d7fa`.
+- **Done when:** a POSIX-gated test proves a symlinked stale manifest entry is refused rather than followed, **and** it actually executes on the Linux runner rather than skipping there too.
+- **Found by:** Diff seat, deletion-bounds review. **First seen:** 2026-09-06.
+- **Status:** done — `test_stale_entry_that_is_a_symlink_is_refused_not_followed` and
+  `test_stale_entry_under_a_symlinked_parent_is_refused` prove the deletion path refuses rather than
+  follows, and `test_symlinks_can_actually_be_created_on_posix` fails on a POSIX runner if symlink
+  creation degrades, so these cannot silently become skips on Linux CI. The deletion control is the
+  pre-existing `test_removed_managed_file_is_deleted`, with
+  `test_stale_file_inside_the_boundary_is_still_deleted` covering the boundary case; a redundant
+  control added alongside these tests was dropped rather than duplicating them. Unproven on Windows,
+  where these skip by design.

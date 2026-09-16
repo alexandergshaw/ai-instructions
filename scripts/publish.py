@@ -45,6 +45,21 @@ class PublishError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class DeliveredNothing:
+    """A target that was reached and left holding nothing, because git will not record it.
+
+    Neither a success nor a failure. Counting it among the successes is the BL-03 bug. Failing
+    the run instead would turn one repository's deliberate, documented choice to exclude
+    `.claude/` into a permanently red scheduled job, which is a different way of being unread.
+    """
+
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass(frozen=True)
 class Target:
     repo: str
     enabled: bool = True
@@ -356,6 +371,64 @@ def repository_has_changes(repo_root: Path, env: dict[str, str]) -> bool:
     return bool(status)
 
 
+def ignored_managed_paths(repo_root: Path, paths: list[Path], env: dict[str, str]) -> list[str]:
+    """Managed paths that exist on disk but that git refuses to track.
+
+    `git check-ignore` exits 1 when nothing matches, which is a normal answer rather than a
+    failure, so this cannot go through `run_command` -- that treats any non-zero exit as fatal.
+    """
+    candidates = sorted({path.as_posix() for path in paths if (repo_root / path).exists()})
+    if not candidates:
+        return []
+
+    merged_env = os.environ.copy()
+    merged_env.update(env)
+    completed = subprocess.run(
+        ["git", "check-ignore", "--"] + candidates,
+        cwd=repo_root,
+        env=merged_env,
+        text=True,
+        capture_output=True,
+    )
+    if completed.returncode not in (0, 1):
+        # An unreadable answer is not evidence that nothing is ignored. Say so rather than
+        # returning an empty list, which would read as "all clear".
+        raise PublishError(
+            f"Could not determine whether the managed area is ignored: "
+            f"{completed.stderr.strip() or completed.stdout.strip()}"
+        )
+    return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+
+
+def report_invisible_delivery(
+    repo_root: Path, paths: list[Path], env: dict[str, str]
+) -> str | None:
+    """Describe the managed paths git will never record, or None when every path is trackable.
+
+    A repository that excludes `.claude/` receives every file on disk and commits none of them.
+    The working tree is clean, so that looks identical to "already up to date" -- and the target
+    is counted among the successes on every run thereafter while holding nothing.
+
+    The reader of this text is the operator of *this* repository, reading a workflow log. No
+    pull request is created, so nobody downstream ever sees it: it says what happened and which
+    lever this reader actually holds, rather than instructing an absent party to edit a file in
+    a repository they do not own.
+    """
+    ignored = ignored_managed_paths(repo_root, paths, env)
+    if not ignored:
+        return None
+
+    considered = sorted({path.as_posix() for path in paths})
+    listed = ", ".join(ignored)
+    return (
+        f"{len(ignored)} of {len(considered)} managed path(s) are matched by this repository's "
+        f"exclude rules, so git cannot record them and nothing was committed: {listed}. "
+        "The remaining paths were not delivered either, because the delivery is not split. "
+        "This is the downstream repository's own choice to make; the lever here is whether the "
+        "target stays in config/targets.json."
+    )
+
+
 def checkout_branch(repo_root: Path, branch_name: str, default_branch: str, env: dict[str, str]) -> bool:
     if remote_branch_exists(repo_root, branch_name, env):
         run_command(["git", "fetch", "origin", branch_name], cwd=repo_root, env=env)
@@ -376,8 +449,9 @@ def commit_changes(repo_root: Path, version: str, managed_paths: list[Path], env
     if missing_paths:
         run_command(["git", "rm", "--quiet", "--ignore-unmatch", "--", *missing_paths], cwd=repo_root, env=env)
 
+    message = subject or f"chore(ai): update Claude instructions to {version}"
     run_command(
-        ["git", "commit", "-m", f"chore(ai): update Claude instructions to {version}"],
+        ["git", "commit", "-m", message],
         cwd=repo_root,
         env=env,
     )
@@ -444,7 +518,7 @@ def process_target(
     version: str,
     env: dict[str, str],
     profiles: dict[str, tuple[str, ...]] | None = None,
-) -> str:
+) -> str | DeliveredNothing:
     validate_repo_name(target.repo)
     selection = resolve_selection(target, profiles or {})
     default_branch = get_default_branch(target.repo, env)
@@ -461,13 +535,31 @@ def process_target(
         adopted = sync_payload(source_root / "payload", repo_root, version, selection)
         changes = classify_changes(repo_root, env)
 
-        if not repository_has_changes(repo_root, env):
-            return f"{target.repo}: no changes"
-
         managed_paths = [Path(item) for item in previous_manifest.get("files", []) if isinstance(item, str)]
         managed_paths.extend(current_payload_files)
         managed_paths.append(MANIFEST_RELATIVE_PATH)
-        commit_changes(repo_root, version, managed_paths, env)
+
+        # Unconditionally, before the clean-tree branch. A single unignored path -- the manifest
+        # is enough -- makes the tree dirty, and inside the clean-tree branch this check would
+        # never run for exactly the mixed case it exists to catch: `git add` would then be handed
+        # an explicitly named excluded path and fail with git's "use -f" hint, which must never
+        # be followed against a repository that asked for this area not to be committed.
+        # The previous manifest's paths are included because an excluded *deletion* is equally
+        # invisible.
+        invisible = report_invisible_delivery(repo_root, managed_paths, env)
+        if invisible is not None:
+            return DeliveredNothing(f"{target.repo}: delivered nothing — {invisible}")
+
+        if not repository_has_changes(repo_root, env):
+            return f"{target.repo}: no changes"
+
+        subject = build_commit_subject(
+            version,
+            added=changes["added"],
+            modified=changes["modified"],
+            removed=changes["removed"],
+        )
+        commit_changes(repo_root, version, managed_paths, env, subject=subject)
         push_branch(repo_root, branch_name, env, force_with_lease=branch_exists)
         existing_pr = find_open_pr(target.repo, branch_name, default_branch, env)
         if existing_pr:
@@ -531,11 +623,15 @@ def main() -> int:
 
     successes: list[str] = []
     failures: list[str] = []
+    delivered_nothing: list[str] = []
     for target in targets:
         try:
-            message = process_target(target, source_root, env["SOURCE_VERSION"], env, profiles)
-            print(message)
-            successes.append(message)
+            outcome = process_target(target, source_root, env["SOURCE_VERSION"], env, profiles)
+            print(outcome)
+            if isinstance(outcome, DeliveredNothing):
+                delivered_nothing.append(str(outcome))
+            else:
+                successes.append(str(outcome))
         except (OSError, PublishError, SyncError, json.JSONDecodeError) as exc:
             message = f"{target.repo}: FAILED - {exc}"
             print(message)
@@ -547,6 +643,11 @@ def main() -> int:
         print(f"- {item}")
     print(f"Failed targets: {len(failures)}")
     for item in failures:
+        print(f"- {item}")
+    # A third bucket, not a success and not a failure. It must be visible -- that is BL-03 --
+    # without turning a downstream team's documented choice into a permanently red job.
+    print(f"Delivered nothing: {len(delivered_nothing)}")
+    for item in delivered_nothing:
         print(f"- {item}")
 
     return 1 if failures else 0

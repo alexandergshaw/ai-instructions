@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -244,6 +245,273 @@ class PublishTests(unittest.TestCase):
         )
 
         self.assertTrue(all("behind" not in l.lower() for l in lines))
+
+    # --- BL-03: a repository that ignores the managed area receives nothing --------------
+
+    def _git_repo(self, gitignore: str | None = None) -> Path:
+        # `self.workspace` is the per-test temporary directory. Each call gets its own
+        # subdirectory so repeated calls inside one test cannot inherit each other's state.
+        self._downstream_count = getattr(self, "_downstream_count", 0) + 1
+        root = self.workspace / f"downstream-{self._downstream_count}"
+        root.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        if gitignore is not None:
+            (root / ".gitignore").write_text(gitignore, encoding="utf-8")
+        managed = root / ".claude/shared/core"
+        managed.mkdir(parents=True)
+        (managed / "engineering.md").write_text("delivered", encoding="utf-8")
+        return root
+
+    def test_a_gitignored_managed_area_is_reported_not_counted_a_success(self) -> None:
+        import publish
+
+        root = self._git_repo(gitignore=".claude/" + chr(10))
+
+        report = publish.report_invisible_delivery(
+            root, [Path(".claude/shared/core/engineering.md")], {}
+        )
+
+        self.assertIsNotNone(report)
+        self.assertIn(".claude/shared/core/engineering.md", report)
+        self.assertIn("exclude rules", report.lower())
+
+    def test_the_report_is_addressed_to_the_central_operator_not_the_downstream_team(self) -> None:
+        """It is printed to this repository's workflow log; no PR carries it downstream.
+
+        Telling that reader to change a file in a repository they do not own is an instruction
+        to an absent party, and the operator's only real lever is the target list.
+        """
+        import publish
+
+        report = publish.report_invisible_delivery(
+            self._git_repo(gitignore=".claude/" + chr(10)),
+            [Path(".claude/shared/core/engineering.md")],
+            {},
+        )
+
+        self.assertNotIn("un-ignore", report.lower())
+        self.assertIn("config/targets.json", report)
+
+    def test_a_partial_delivery_says_what_was_and_was_not_delivered(self) -> None:
+        """"the repository will receive nothing" is false when only some paths are ignored."""
+        import publish
+
+        root = self._git_repo(gitignore=".claude/shared/core/" + chr(10))
+        visible = root / ".claude/shared/other.md"
+        visible.write_text("visible", encoding="utf-8")
+
+        report = publish.report_invisible_delivery(
+            root,
+            [Path(".claude/shared/core/engineering.md"), Path(".claude/shared/other.md")],
+            {},
+        )
+
+        self.assertIsNotNone(report)
+        self.assertIn(".claude/shared/core/engineering.md", report)
+        self.assertNotIn("receive nothing", report.lower())
+        self.assertIn("1 of 2", report)
+
+    def test_a_repository_that_tracks_the_managed_area_is_not_flagged(self) -> None:
+        """The control: without it the check above passes against code that always reports."""
+        import publish
+
+        root = self._git_repo(gitignore="build/" + chr(10))
+
+        self.assertIsNone(
+            publish.report_invisible_delivery(
+                root, [Path(".claude/shared/core/engineering.md")], {}
+            )
+        )
+
+    def test_a_repository_with_no_gitignore_at_all_is_not_flagged(self) -> None:
+        import publish
+
+        root = self._git_repo(gitignore=None)
+
+        self.assertIsNone(
+            publish.report_invisible_delivery(
+                root, [Path(".claude/shared/core/engineering.md")], {}
+            )
+        )
+
+    def test_an_unreadable_check_ignore_answer_is_not_treated_as_all_clear(self) -> None:
+        """Exit codes other than 0 and 1 are failures, not "nothing is ignored"."""
+        import publish
+
+        root = self._git_repo(gitignore=None)
+
+        with patch(
+            "publish.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 128, stdout="", stderr="not a git repo"),
+        ):
+            with self.assertRaises(PublishError) as caught:
+                publish.ignored_managed_paths(
+                    root, [Path(".claude/shared/core/engineering.md")], {}
+                )
+
+        self.assertIn("not a git repo", str(caught.exception))
+
+    # --- BL-03 at the call site: process_target, where the defect actually lives ----------
+
+    def _downstream_clone(self, gitignore: str | None) -> Path:
+        """A real single-branch git repository, committed, standing in for a clone."""
+        self._clone_count = getattr(self, "_clone_count", 0) + 1
+        root = self.workspace / f"clone-{self._clone_count}"
+        root.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=root, check=True)
+        (root / "README.md").write_text("downstream\n", encoding="utf-8")
+        if gitignore is not None:
+            (root / ".gitignore").write_text(gitignore, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=root, check=True)
+        return root
+
+    def _run_process_target(self, gitignore: str | None, payload: dict[str, str]):
+        """Drive the real `process_target` against a real local repository.
+
+        Only the network edges are stubbed: cloning, pushing, and the GitHub calls. Everything
+        that decides whether a delivery is visible -- git status, check-ignore, the branch in
+        `process_target` -- is the real code.
+        """
+        import publish
+        from sync_payload import MANIFEST_RELATIVE_PATH
+
+        clone = self._downstream_clone(gitignore)
+        recorded: dict[str, object] = {"pushed": [], "prs": []}
+
+        def fake_clone(repo, destination, env):
+            shutil.copytree(clone, destination)
+
+        def fake_sync(payload_root, repo_root, version, include_prefixes=None):
+            for relative, content in payload.items():
+                destination = repo_root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(content, encoding="utf-8")
+            manifest = repo_root / MANIFEST_RELATIVE_PATH
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(
+                json.dumps({"version": version, "files": sorted(payload)}), encoding="utf-8"
+            )
+            return []
+
+        with patch.object(publish, "clone_repository", fake_clone), patch.object(
+            publish, "get_default_branch", lambda repo, env: "main"
+        ), patch.object(publish, "sync_payload", fake_sync), patch.object(
+            publish, "get_payload_files", lambda root, selection: [Path(p) for p in payload]
+        ), patch.object(publish, "load_previous_manifest", lambda root: {}), patch.object(
+            publish, "remote_branch_exists", lambda *a, **k: False
+        ), patch.object(
+            publish, "push_branch", lambda root, branch, env, **k: recorded["pushed"].append(branch)
+        ), patch.object(publish, "find_open_pr", lambda *a, **k: None), patch.object(
+            publish,
+            "create_pr",
+            lambda *a, **k: recorded["prs"].append(k.get("title")) or "https://pr",
+        ):
+            outcome = publish.process_target(
+                publish.Target(repo="owner/downstream"),
+                ROOT,
+                "v9.9.9",
+                {"BOT_NAME": "bot", "BOT_EMAIL": "bot@example.com"},
+                {},
+            )
+
+        return outcome, recorded
+
+    def test_a_fully_ignored_target_pushes_nothing_and_opens_no_pull_request(self) -> None:
+        import publish
+
+        outcome, recorded = self._run_process_target(
+            gitignore=".claude/" + chr(10),
+            payload={".claude/shared/core/engineering.md": "delivered"},
+        )
+
+        self.assertIsInstance(outcome, publish.DeliveredNothing)
+        self.assertEqual(recorded["pushed"], [])
+        self.assertEqual(recorded["prs"], [])
+        self.assertIn(".claude/shared/core/engineering.md", str(outcome))
+
+    def test_a_partially_ignored_target_is_caught_even_though_the_tree_is_dirty(self) -> None:
+        """The case the check escaped: one unignored path makes the tree dirty.
+
+        The clean-tree branch never runs, `git add` is handed an ignored path, and the operator
+        is told to force-commit into a repository that asked for `.claude/` not to be committed.
+        """
+        import publish
+
+        outcome, recorded = self._run_process_target(
+            gitignore=".claude/shared/core/" + chr(10),
+            payload={
+                ".claude/shared/core/engineering.md": "delivered",
+                ".claude/shared/visible.md": "delivered",
+            },
+        )
+
+        self.assertIsInstance(outcome, publish.DeliveredNothing)
+        self.assertEqual(recorded["pushed"], [])
+        self.assertEqual(recorded["prs"], [])
+
+    def test_a_target_that_tracks_everything_still_opens_a_pull_request(self) -> None:
+        """The control: without it the two tests above pass against code that never delivers."""
+        import publish
+
+        outcome, recorded = self._run_process_target(
+            gitignore=None,
+            payload={".claude/shared/core/engineering.md": "delivered"},
+        )
+
+        self.assertNotIsInstance(outcome, publish.DeliveredNothing)
+        self.assertEqual(len(recorded["pushed"]), 1)
+        self.assertEqual(len(recorded["prs"]), 1)
+        self.assertIn("v9.9.9", str(recorded["prs"][0]))
+
+    def test_delivering_nothing_is_a_third_bucket_that_does_not_fail_the_run(self) -> None:
+        """BL-03: distinct from a success, and not a permanent red build either."""
+        import publish
+
+        processed: list[str] = []
+
+        def fake_process_target(target, source_root, version, env, profiles=None):
+            processed.append(target.repo)
+            if target.repo == "owner/ignoring":
+                return publish.DeliveredNothing(
+                    f"{target.repo}: delivered nothing — the managed area is excluded"
+                )
+            return f"{target.repo}: ok"
+
+        targets_file = self.write_targets(
+            {
+                "targets": [
+                    {"repo": "owner/ignoring", "enabled": True},
+                    {"repo": "owner/healthy", "enabled": True},
+                ]
+            }
+        )
+        env = {
+            "GH_TOKEN": "token",
+            "SOURCE_VERSION": "v1.0.0",
+            "BOT_NAME": "bot",
+            "BOT_EMAIL": "bot@example.com",
+        }
+
+        with patch.object(publish, "process_target", fake_process_target), patch.object(
+            publish, "require_environment", lambda: env
+        ), patch.object(publish, "configure_git_transport_auth", lambda _env: None), patch.object(
+            publish, "load_targets", lambda _path: load_targets(targets_file)
+        ), patch("builtins.print") as mock_print:
+            exit_code = publish.main()
+
+        printed = "\n".join(
+            str(call.args[0]) if call.args else "" for call in mock_print.call_args_list
+        )
+
+        self.assertEqual(processed, ["owner/ignoring", "owner/healthy"])
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Successful targets: 1", printed)
+        self.assertIn("Failed targets: 0", printed)
+        self.assertIn("Delivered nothing: 1", printed)
+        self.assertIn("owner/ignoring", printed)
 
     @patch("publish.subprocess.run")
     def test_remote_branch_exists_uses_exact_ref(self, mock_run) -> None:

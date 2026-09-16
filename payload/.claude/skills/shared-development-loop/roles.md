@@ -163,4 +163,5 @@ and no git writes.
 leaves the code as it was — silently declining turns a finding into a silence, and silence is
 indistinguishable from fixed.
 
-Its changes are code like any other: they re-run the gates, and each needs a test that can fail.
+Its changes are code like any other: they re-run the gates (`checks.md`), and each needs a test
+that can fail.

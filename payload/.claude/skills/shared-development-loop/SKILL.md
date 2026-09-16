@@ -72,7 +72,7 @@ contradicted by something in the tree. If so, say it and reframe the work, in th
 
 **0b. Re-chunk the whole queue** when a request lands; never append to a flat list. Priority:
 file-set disjointness, then unblockers, then same-evidence items together, then each chunk
-independently completable, and **never chunk around the gates**.
+independently completable, and **never chunk around the gates** (`checks.md`).
 
 **0c. Dispatch disjoint work concurrently** — within the chunk the person asked for, never a later
 one, which 0d holds. Disjointness has two halves and both must hold — see
@@ -102,8 +102,9 @@ wording is load-bearing, and which file owns what. Verified external facts go in
 and the date checked, quoted.
 
 **When the change exists to save something — money, time, runs — the first criterion measures the
-saving under the gate's own rules, before any criterion designs machinery.** If it comes out near
-zero, the person decides scope before another round is spent.
+saving under the measurement rules the gates themselves use (`checks.md`), before any criterion
+designs machinery.** If it comes out near zero, the person decides scope before another round is
+spent.
 
 Record them where the repository keeps working documents; if it keeps none, state them in your
 report rather than creating a file.
@@ -167,10 +168,10 @@ A sibling's module reported missing by a type check is reported, never created o
 
 ## 8. Verify
 
-A seat, never the author. Read the diff; run the gates; exercise every criterion; **confirm each new
-value at its production call site by hand**; and **rule on every triaged-out seat's trigger against
-the built diff** — briefed with the triaged-out *list* only, never the triage rationale, so it rules
-fresh. List the external behaviours the diff depends on.
+A seat, never the author. Read the diff; run the gates (`checks.md`), naming the commands; exercise
+every criterion; **confirm each new value at its production call site by hand**; and **rule on every
+triaged-out seat's trigger against the built diff** — briefed with the triaged-out *list* only,
+never the triage rationale, so it rules fresh. List the external behaviours the diff depends on.
 
 Report the line count of every touched file. Compare against a limit only where the repository
 defines one; never invent a threshold. **Never split a file whose path or single-file shape is fixed
@@ -246,13 +247,14 @@ automated and manual sets **separately — never as one coverage figure**.
 ## 14. RCA
 
 For anything that got through: causal chain with `file:line` and a prescribed fix → implementer →
-delta review → regression re-run. Loop until the gates are green on code that has been reviewed in
-the state it was run in.
+delta review → regression re-run. Loop until the gates (`checks.md`) are green on code that has
+been reviewed in the state it was run in.
 
 ## 15. Hand over
 
-Report the gates with their real numbers and their limits: what was never run, never rendered, never
-observed. A report listing only successes is a trap for the next session.
+Report the gates by name (`checks.md`), with their real numbers and their limits: what was never
+run, never rendered, never observed. A report listing only successes is a trap for the next
+session.
 
 Then stop. Committing, pushing, opening a pull request and merging are the person's, per the floor.
 

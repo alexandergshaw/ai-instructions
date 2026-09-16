@@ -9,5 +9,5 @@
 - Preserve compatibility unless requirements explicitly change expected behavior.
 - State assumptions when repository behavior or requirements are ambiguous.
 - Avoid unrelated refactoring while implementing the requested change.
-- Reachability is a first-class check. A capability can pass every gate and ship dead: trace each one from the entry point someone actually reaches to the code that performs it. A value computed and never surfaced, and an error whose reason never reaches whoever needs it, both pass every automated gate.
+- Reachability is a first-class check. A capability can pass every automated check this repository defines — lint, type check, tests, build — and still ship dead: trace each one from the entry point someone actually reaches to the code that performs it. A value computed and never surfaced, and an error whose reason never reaches whoever needs it, both pass all of them.
 - Preserve the reason a failure happened. Collapsing distinct failures into one indistinguishable state is among the most common defects worth catching.

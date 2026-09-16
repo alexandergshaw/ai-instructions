@@ -3,6 +3,32 @@
 Every artifact any agent writes is checked **before its consumer reads it**, by a fresh agent that
 is neither its author nor the orchestrator.
 
+## The gates
+
+**The gates are this repository's own automated checks** — the commands it already defines as
+required to pass. There is no fixed list, because it differs per repository: typically a linter, a
+type checker, a test suite, and a build, but a repository may have three of those, or one, or none.
+
+Take them from the **first** of these sources that names commands, and stop there. First match
+wins: do not merge sources, and do not fall through to a later one because an earlier one looks
+incomplete. Where two sources disagree, the earlier one governs and the disagreement is reported.
+
+1. The repository's contributing or development documentation.
+2. Its CI workflow definitions, counting only jobs that run on a pull request to the default
+   branch. A job that only publishes, deploys, releases or reports is not a gate.
+3. Its build or task configuration — the task runner, script table or build file.
+
+Where the repository holds more than one project, the gates are the ones covering the files you
+changed. Run those and name the project you scoped to.
+
+**Name the exact commands you took to be the gates, and quote each one's real output.** A report
+that claims the gates pass without naming the commands is rejected by the seat reading it, and the
+step it belongs to is not done.
+
+If the repository defines none, report that and run nothing in their place. Running something it
+does not define is inventing a gate: the invariant for an absent dependency applies — skip it, say
+so, and do not report the step as passed.
+
 ## A check without a control is not a check
 
 An instrument counts as a check only if something fires when **the instrument itself** is broken: a

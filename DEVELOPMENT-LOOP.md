@@ -161,6 +161,20 @@ Enforced by the code today, each with the test that proves it:
   updates again (`test_refused_entry_does_not_block_delivery_or_later_syncs`).
 - **Vetting happens before any deletion**, so a refusal partway through cannot leave a repository
   in a state neither manifest describes (`test_no_partial_deletion_when_a_later_entry_is_refused`).
+- **A delivery git will never record is reported as its own outcome, not as a success.** A target
+  whose managed paths are matched by its own exclude rules pushes no branch and opens no pull
+  request, is reported in a third bucket rather than counted among the successes, and does not set
+  a non-zero exit code or stop the remaining targets
+  (`test_a_fully_ignored_target_pushes_nothing_and_opens_no_pull_request`,
+  `test_a_partially_ignored_target_is_caught_even_though_the_tree_is_dirty`,
+  `test_delivering_nothing_is_a_third_bucket_that_does_not_fail_the_run`), while a target that
+  tracks the managed area still opens a pull request
+  (`test_a_target_that_tracks_everything_still_opens_a_pull_request`).
+- **A symlinked stale manifest entry, and one under a symlinked parent, are refused rather than
+  followed on the deletion path** (`test_stale_entry_that_is_a_symlink_is_refused_not_followed`,
+  `test_stale_entry_under_a_symlinked_parent_is_refused`). These are POSIX-gated and run on the
+  Linux CI runner; `test_symlinks_can_actually_be_created_on_posix` fails there if they silently
+  degrade into skips.
 - **Distribution is bounded by the same roots as cleanup**, in both the sync code and
   `scripts/validate.py`, so the two halves cannot drift apart
   (`test_payload_file_outside_managed_roots_is_rejected`,
@@ -173,11 +187,11 @@ Known gaps — real, and not to be described as covered:
   (`.claude/shared/**`, `.claude/skills/shared-*/**`, and the manifest). A manifest naming
   downstream-authored `.claude` content will still delete it. Narrowing the bound to that
   documented boundary is tracked as `BL-02`.
-- **A downstream repository that gitignores `.claude/` is reported as a success while receiving
-  nothing.** `repository_has_changes` sees a clean tree and `process_target` returns "no changes",
-  so the target is counted among the successes forever. Tracked as `BL-03`.
-- **The symlink refusals on the deletion path have no test on any platform**, and the one symlink
-  test that exists covers the copy path and skips on Windows. Tracked as `BL-15`.
+- **No test exercises `process_target` against a real remote.** The coverage above stubs the
+  network edges — cloning, pushing, and the GitHub calls — so an error in what is actually sent to
+  `gh` surfaces for the first time during a real distribution run. Tracked as `BL-19`.
+- **The symlink refusals are unproven on Windows**, where they skip by design. The local suite on
+  that platform reports `skipped=4` and proves nothing about them; the Linux runner does.
 
 ### 6. Peer evaluation (T2 and above)
 
