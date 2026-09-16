@@ -11,6 +11,12 @@ from typing import Any
 MANIFEST_RELATIVE_PATH = Path(".claude/.central-instructions-manifest.json")
 MANIFEST_SOURCE = "central-claude-instructions"
 
+# The manifest shape this code understands. A manifest declaring a higher version was written
+# by a newer central repository: its `files` array may mean something this code would
+# misread, so it authorizes nothing. Delivery still proceeds and the manifest is rewritten at
+# the shape below, so the repository self-heals -- the same treatment a foreign `source` gets.
+MANIFEST_SCHEMA_VERSION = 1
+
 # The area this system owns downstream, and therefore the only area it may delete from or write
 # into. This is the boundary README documents -- not the whole of `.claude/`, which also holds
 # content the downstream repository authored for itself.
@@ -161,6 +167,16 @@ def load_previous_manifest(repo_root: Path) -> dict[str, Any]:
     if source is not None and source != MANIFEST_SOURCE:
         return {"files": []}
 
+    schema_version = data.get("schemaVersion")
+    if schema_version is not None and schema_version != MANIFEST_SCHEMA_VERSION:
+        print(
+            f"WARNING: manifest declares schemaVersion {schema_version!r}, which this version does "
+            f"not understand (it writes {MANIFEST_SCHEMA_VERSION}). Treating it as claiming "
+            "nothing: no file will be deleted on the strength of it.",
+            file=sys.stderr,
+        )
+        return {"files": []}
+
     files = data.get("files", [])
     if not isinstance(files, list) or not all(isinstance(item, str) for item in files):
         raise SyncError("Existing manifest must contain a string array in 'files'.")
@@ -282,7 +298,7 @@ def write_manifest(repo_root: Path, version: str, files: list[Path]) -> None:
     manifest_path = repo_root / MANIFEST_RELATIVE_PATH
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schemaVersion": 1,
+        "schemaVersion": MANIFEST_SCHEMA_VERSION,
         "source": MANIFEST_SOURCE,
         "version": version,
         "files": [path.as_posix() for path in sorted(files)],
@@ -346,6 +362,7 @@ __all__ = [
     "detect_adoptions",
     "managed_area_description",
     "MANIFEST_RELATIVE_PATH",
+    "MANIFEST_SCHEMA_VERSION",
     "MANIFEST_SOURCE",
     "SyncError",
     "copy_payload",

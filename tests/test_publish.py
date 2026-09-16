@@ -32,7 +32,8 @@ class PublishTests(unittest.TestCase):
         with self.assertRaises(PublishError):
             load_targets(self.write_targets([]))
 
-    def test_load_targets_accepts_future_optional_fields(self) -> None:
+    def test_load_targets_accepts_optional_fields(self) -> None:
+        """`languages` was removed by BL-10; `profile` is the remaining optional field."""
         targets = load_targets(
             self.write_targets(
                 {
@@ -41,7 +42,6 @@ class PublishTests(unittest.TestCase):
                             "repo": "owner/repository",
                             "enabled": True,
                             "profile": "student-autograded",
-                            "languages": ["python", "sql"],
                         }
                     ]
                 }
@@ -49,7 +49,6 @@ class PublishTests(unittest.TestCase):
         )
 
         self.assertEqual(targets[0].profile, "student-autograded")
-        self.assertEqual(targets[0].languages, ["python", "sql"])
 
     def test_sync_error_in_one_target_does_not_abort_remaining_targets(self) -> None:
         """AGENTS.md: one downstream failure must not prevent attempts against the rest."""
@@ -154,6 +153,97 @@ class PublishTests(unittest.TestCase):
         )
 
         self.assertIsNone(selection)
+
+    # --- BL-10: a schema promise nothing keeps is removed, loudly --------------------
+
+    def test_languages_is_rejected_with_a_pointer_to_profiles(self) -> None:
+        with self.assertRaisesRegex(PublishError, "profile"):
+            load_targets(
+                self.write_targets(
+                    {"targets": [{"repo": "owner/repository", "languages": ["python"]}]}
+                )
+            )
+
+    def test_a_target_without_languages_is_unaffected(self) -> None:
+        targets = load_targets(
+            self.write_targets({"targets": [{"repo": "owner/repository", "profile": "x"}]})
+        )
+        self.assertEqual(targets[0].profile, "x")
+
+    # --- BL-08: the pull request says what changed ------------------------------------
+
+    def test_the_pr_body_lists_what_changed(self) -> None:
+        import publish
+
+        body = publish.build_pr_body(
+            version="v2.0.0",
+            profile="standards-only",
+            added=[".claude/shared/core/new.md"],
+            modified=[".claude/shared/core/engineering.md"],
+            removed=[".claude/shared/languages/cpp.md"],
+            adopted=[],
+        )
+
+        self.assertIn(".claude/shared/core/new.md", body)
+        self.assertIn(".claude/shared/languages/cpp.md", body)
+        self.assertIn("standards-only", body)
+        self.assertIn("Removed", body)
+
+    def test_the_pr_body_marks_a_first_delivery_rather_than_an_update(self) -> None:
+        import publish
+
+        body = publish.build_pr_body(
+            version="v2.0.0", profile=None,
+            added=[".claude/shared/core/engineering.md"], modified=[], removed=[], adopted=[],
+        )
+
+        self.assertIn("first", body.lower())
+
+    def test_the_pr_body_names_files_it_overwrote_that_no_manifest_claimed(self) -> None:
+        import publish
+
+        body = publish.build_pr_body(
+            version="v2.0.0", profile=None, added=[], modified=[".claude/shared/x.md"],
+            removed=[], adopted=[".claude/shared/x.md"],
+        )
+
+        self.assertIn("no manifest claimed", body.lower())
+
+    def test_the_commit_subject_says_what_it_did(self) -> None:
+        import publish
+
+        only_removals = publish.build_commit_subject("v2.0.0", added=[], modified=[], removed=["a"])
+        first = publish.build_commit_subject("v2.0.0", added=["a"], modified=[], removed=[])
+
+        self.assertIn("remove", only_removals.lower())
+        self.assertNotEqual(only_removals, first)
+
+    # --- BL-18: every enabled target's last-received version is reported ---------------
+
+    def test_fleet_report_distinguishes_never_received_from_behind(self) -> None:
+        import publish
+
+        lines = publish.format_fleet_report(
+            {"owner/current": "v2.0.0", "owner/behind": "v1.0.0", "owner/absent": None},
+            current_version="v2.0.0",
+        )
+        rendered = "\n".join(lines)
+
+        self.assertIn("owner/absent", rendered)
+        self.assertIn("no manifest", rendered.lower())
+        self.assertIn("v1.0.0", rendered)
+        self.assertNotEqual(
+            [l for l in lines if "owner/absent" in l], [l for l in lines if "owner/behind" in l]
+        )
+
+    def test_fleet_report_is_quiet_when_every_target_is_current(self) -> None:
+        import publish
+
+        lines = publish.format_fleet_report(
+            {"owner/a": "v2.0.0", "owner/b": "v2.0.0"}, current_version="v2.0.0"
+        )
+
+        self.assertTrue(all("behind" not in l.lower() for l in lines))
 
     @patch("publish.subprocess.run")
     def test_remote_branch_exists_uses_exact_ref(self, mock_run) -> None:

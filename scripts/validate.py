@@ -69,11 +69,11 @@ def validate_targets_config(config_path: Path) -> list[str]:
         if profile is not None and not isinstance(profile, str):
             errors.append(f"{prefix}.profile must be a string when present.")
 
-        languages = target.get("languages")
-        if languages is not None and (
-            not isinstance(languages, list) or not all(isinstance(language, str) for language in languages)
-        ):
-            errors.append(f"{prefix}.languages must be an array of strings when present.")
+        if "languages" in target:
+            errors.append(
+                f"{prefix} sets 'languages', which no longer affects distribution. "
+                "Express language selection as a profile in config/profiles.json instead."
+            )
 
     return errors
 

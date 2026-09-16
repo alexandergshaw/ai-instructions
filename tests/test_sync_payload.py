@@ -52,13 +52,16 @@ class SyncPayloadTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
-    def write_manifest_files(self, files: list[str]) -> None:
+    def write_manifest_files(self, files: list[str], schema_version: int | None = 1) -> None:
         manifest_path = self.repo_root / MANIFEST_RELATIVE_PATH
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        document: dict[str, object] = {}
+        if schema_version is not None:
+            document["schemaVersion"] = schema_version
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schemaVersion": 1,
+                    **document,
                     "source": MANIFEST_SOURCE,
                     "version": "v0.9.0",
                     "files": files,
@@ -472,6 +475,51 @@ class SyncPayloadTests(unittest.TestCase):
             path = self.repo_root / f".claude/shared/{name}"
             self.assertEqual(path.read_text(encoding="utf-8"), "v2")
         self.assertEqual(len(adopted), 2)
+
+    # --- BL-11: an unreadable manifest shape authorizes nothing ----------------------
+
+    def test_unknown_schema_version_authorizes_no_deletion(self) -> None:
+        """A shape we cannot read must not be acted on -- but must not stop delivery either."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        stale = self.repo_root / ".claude/shared/legacy/old.md"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text("would be deleted under a readable manifest", encoding="utf-8")
+        self.write_manifest_files([".claude/shared/legacy/old.md"], schema_version=99)
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertTrue(stale.exists())
+        self.assertTrue((self.repo_root / ".claude/shared/core/engineering.md").is_file())
+
+    def test_unknown_schema_version_self_heals_on_the_next_run(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        self.write_manifest_files([".claude/shared/legacy/old.md"], schema_version=99)
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertEqual(self.read_manifest()["schemaVersion"], 1)
+
+    def test_the_current_schema_version_still_authorizes_deletion(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        stale = self.repo_root / ".claude/shared/legacy/old.md"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text("stale", encoding="utf-8")
+        self.write_manifest_files([".claude/shared/legacy/old.md"], schema_version=1)
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertFalse(stale.exists())
+
+    def test_a_manifest_without_a_schema_version_behaves_as_before(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        stale = self.repo_root / ".claude/shared/legacy/old.md"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text("stale", encoding="utf-8")
+        self.write_manifest_files([".claude/shared/legacy/old.md"], schema_version=None)
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertFalse(stale.exists())
 
     @unittest.skipUnless(SYMLINKS_SUPPORTED, "Platform does not permit creating symlinks.")
     def test_symlinked_managed_destination_is_rejected(self) -> None:

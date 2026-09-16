@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -13,7 +14,7 @@ from sync_payload import MANIFEST_RELATIVE_PATH, SyncError, get_payload_files, l
 
 REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 REQUIRED_ENV_VARS = ("GH_TOKEN", "SOURCE_VERSION", "BOT_NAME", "BOT_EMAIL")
-PR_BODY_TEMPLATE = """## Central Claude instruction update
+_UNUSED_PR_BODY_TEMPLATE = """## Central Claude instruction update
 
 This pull request was generated automatically from the central Claude instructions repository.
 
@@ -48,7 +49,107 @@ class Target:
     repo: str
     enabled: bool = True
     profile: str | None = None
-    languages: list[str] | None = None
+
+
+def _render_paths(heading: str, paths: list[str]) -> str:
+    if not paths:
+        return ""
+    listed = "\n".join(f"- `{path}`" for path in sorted(paths))
+    return f"### {heading}\n\n{listed}\n\n"
+
+
+def build_pr_body(
+    *,
+    version: str,
+    profile: str | None,
+    added: list[str],
+    modified: list[str],
+    removed: list[str],
+    adopted: list[str],
+) -> str:
+    """Describe this specific change, not the automation in general.
+
+    A body that is identical every time tells a reviewer nothing, and on a first delivery the
+    old template pointed at a manifest that arrives in the same pull request -- so the one
+    document it offered as evidence could not be consulted.
+    """
+    first_delivery = not modified and not removed and bool(added)
+    opening = (
+        "This is the **first** delivery of centrally managed instructions to this repository."
+        if first_delivery
+        else "This updates centrally managed instruction files in this repository."
+    )
+    scope = f"`{profile}`" if profile else "the complete instruction set"
+
+    sections = (
+        _render_paths("Added", added)
+        + _render_paths("Updated", modified)
+        + _render_paths("Removed", removed)
+    )
+    if removed:
+        sections += (
+            "Removed files were recorded in this repository's manifest and are no longer part of "
+            "the central set. Files this repository authored are never removed.\n\n"
+        )
+    if adopted:
+        listed = "\n".join(f"- `{path}`" for path in sorted(adopted))
+        sections += (
+            "### Overwritten without a prior record\n\n"
+            "These paths already existed here and no manifest claimed them. They sit inside the "
+            "area the central repository owns, so the write proceeded -- it is listed rather than "
+            f"silent so you can check it:\n\n{listed}\n\n"
+        )
+
+    return (
+        f"## Instruction update — `{version}`\n\n"
+        f"{opening}\n\n"
+        f"**Receiving:** {scope}\n\n"
+        f"{sections}"
+        "### What this automation does and does not touch\n\n"
+        "It manages only the paths listed in `.claude/.central-instructions-manifest.json` after "
+        "this pull request lands. Your root `CLAUDE.md`, and any `.claude` content this repository "
+        "authored outside the central area, are never modified or removed.\n\n"
+        "### Review guidance\n\n"
+        "These files instruct AI agents working in this repository, so a change here changes how "
+        "they behave. Worth a closer look: repository structure, testing behaviour, automated "
+        "grading, security rules, and anything that authorizes an agent to act without asking.\n"
+    )
+
+
+def build_commit_subject(
+    version: str, *, added: list[str], modified: list[str], removed: list[str]
+) -> str:
+    """A subject that distinguishes an install from an update from a removal."""
+    if added and not modified and not removed:
+        return f"chore(ai): add shared agent instructions ({version})"
+    if removed and not added and not modified:
+        return f"chore(ai): remove {len(removed)} retired agent instruction file(s) ({version})"
+    parts = []
+    if added:
+        parts.append(f"+{len(added)}")
+    if modified:
+        parts.append(f"~{len(modified)}")
+    if removed:
+        parts.append(f"-{len(removed)}")
+    return f"chore(ai): update shared agent instructions ({version}, {' '.join(parts)})"
+
+
+def classify_changes(repo_root: Path, env: dict[str, str]) -> dict[str, list[str]]:
+    """Read the working tree to find what this sync actually did."""
+    status = run_command(["git", "status", "--porcelain"], cwd=repo_root, env=env)
+    changes: dict[str, list[str]] = {"added": [], "modified": [], "removed": []}
+    for line in status.splitlines():
+        if not line.strip():
+            continue
+        code, _, path = line.strip().partition(" ")
+        path = path.strip().strip('"')
+        if code.startswith("D"):
+            changes["removed"].append(path)
+        elif code.startswith("?") or code.startswith("A"):
+            changes["added"].append(path)
+        else:
+            changes["modified"].append(path)
+    return changes
 
 
 def run_command(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
@@ -115,21 +216,57 @@ def load_targets(config_path: Path) -> list[Target]:
         if profile is not None and not isinstance(profile, str):
             raise PublishError(f"Target {repo} has a non-string profile value.")
 
-        languages = item.get("languages")
-        if languages is not None and (
-            not isinstance(languages, list) or not all(isinstance(language, str) for language in languages)
-        ):
-            raise PublishError(f"Target {repo} languages must be an array of strings when present.")
+        if "languages" in item:
+            raise PublishError(
+                f"Target {repo} sets 'languages', which no longer affects distribution. "
+                "Express language selection as a profile in config/profiles.json instead."
+            )
 
         targets.append(
             Target(
                 repo=repo,
                 enabled=enabled,
                 profile=profile,
-                languages=languages,
             )
         )
     return targets
+
+
+def format_fleet_report(versions: dict[str, str | None], *, current_version: str) -> list[str]:
+    """One line per enabled target, including the ones this run did not touch."""
+    lines = ["Fleet status"]
+    for repo in sorted(versions):
+        recorded = versions[repo]
+        if recorded is None:
+            lines.append(
+                f"  {repo}: no manifest — has never received a delivery, or is not committing "
+                "the managed area"
+            )
+        elif recorded == current_version:
+            lines.append(f"  {repo}: {recorded}")
+        else:
+            lines.append(f"  {repo}: {recorded} — behind {current_version}")
+    return lines
+
+
+def read_recorded_version(repo: str, env: dict[str, str]) -> str | None:
+    """Read a target's recorded version without cloning it. Read-only; writes nothing."""
+    try:
+        encoded = run_command(
+            [
+                "gh", "api", f"repos/{repo}/contents/{MANIFEST_RELATIVE_PATH.as_posix()}",
+                "--jq", ".content",
+            ],
+            env=env,
+        )
+    except PublishError:
+        return None
+    try:
+        document = json.loads(base64.b64decode(encoded).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    version = document.get("version")
+    return version if isinstance(version, str) else None
 
 
 def load_profiles(config_path: Path) -> dict[str, tuple[str, ...]]:
@@ -229,7 +366,7 @@ def checkout_branch(repo_root: Path, branch_name: str, default_branch: str, env:
     return False
 
 
-def commit_changes(repo_root: Path, version: str, managed_paths: list[Path], env: dict[str, str]) -> None:
+def commit_changes(repo_root: Path, version: str, managed_paths: list[Path], env: dict[str, str], subject: str | None = None) -> None:
     unique_paths = sorted({path.as_posix() for path in managed_paths})
     existing_paths = [path for path in unique_paths if (repo_root / path).exists() or (repo_root / path).is_symlink()]
     missing_paths = [path for path in unique_paths if path not in existing_paths]
@@ -278,9 +415,9 @@ def find_open_pr(repo: str, branch_name: str, base_branch: str, env: dict[str, s
     return output or None
 
 
-def create_pr(repo: str, branch_name: str, base_branch: str, version: str, env: dict[str, str]) -> str:
-    title = f"chore(ai): update shared Claude instructions to {version}"
-    body = PR_BODY_TEMPLATE.format(version=version)
+def create_pr(repo: str, branch_name: str, base_branch: str, version: str, env: dict[str, str], title: str | None = None, body: str | None = None) -> str:
+    title = title or f"chore(ai): update shared agent instructions ({version})"
+    body = body or ""
     return run_command(
         [
             "gh",
@@ -321,7 +458,8 @@ def process_target(
         branch_exists = checkout_branch(repo_root, branch_name, default_branch, env)
         previous_manifest = load_previous_manifest(repo_root)
         current_payload_files = get_payload_files(source_root / "payload", selection)
-        sync_payload(source_root / "payload", repo_root, version, selection)
+        adopted = sync_payload(source_root / "payload", repo_root, version, selection)
+        changes = classify_changes(repo_root, env)
 
         if not repository_has_changes(repo_root, env):
             return f"{target.repo}: no changes"
@@ -335,7 +473,22 @@ def process_target(
         if existing_pr:
             return f"{target.repo}: updated existing PR {existing_pr}"
 
-        pr_url = create_pr(target.repo, branch_name, default_branch, version, env)
+        pr_url = create_pr(
+            target.repo,
+            branch_name,
+            default_branch,
+            version,
+            env,
+            title=subject,
+            body=build_pr_body(
+                version=version,
+                profile=target.profile,
+                added=changes["added"],
+                modified=changes["modified"],
+                removed=changes["removed"],
+                adopted=adopted,
+            ),
+        )
         return f"{target.repo}: created PR {pr_url}"
 
 

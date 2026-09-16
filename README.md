@@ -146,7 +146,9 @@ in total. That matters because a profile with five good prefixes and one typo wo
 CI and silently delete every file the dead prefix used to cover. A prefix also goes dead when a
 payload directory is renamed, so this check guards releases as well as edits.
 
-`languages` is accepted and validated but does not yet affect distribution.
+A target that still sets `languages` is rejected, with a pointer to profiles. The field never
+affected distribution, and language selection is expressible as a profile — two mechanisms for
+one job is how they drift apart.
 
 ## Sending a release to some repositories but not others
 

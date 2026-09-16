@@ -75,34 +75,7 @@ A tag repoint by a third party would reach a workflow holding the token from BL-
 
 ## Distribution ergonomics
 
-### BL-08 — the PR body does not convey what changed · `fix` · T3
 
-Static apart from `{version}`; says `chore` for behaviour changes; lists no added or removed paths.
-A maintainer can receive a PR whose entire content is deletions, titled with a version they already
-have.
-
-- **Evidence:** `grep -n "PR_BODY_TEMPLATE" -A20 scripts/publish.py`; `grep -n "chore(ai)" scripts/publish.py`. As of `b14d7fa`.
-- **Done when:** the body lists added, modified and removed managed paths for that target, **and** names the profile that produced the selection, **and** a target receiving no changes still opens no PR.
-- **Found by:** Downstream advocate, repeatedly across three reviews. **First seen:** 2026-09-06.
-- **Status:** open
-
-### BL-18 — a repository scoped out of successive releases is stranded silently · `fix` · T3
-
-Staged rollout can leave repositories behind indefinitely, and nothing surfaces it. Each downstream
-repository records the version it last received, but that value is written and never read: no run
-compares it to anything, and no report says which repositories are behind or by how much.
-
-A repository excluded from three consecutive releases produces three green runs and no artifact
-anywhere recording that it was skipped.
-
-- **Evidence:** `grep -rn '"version"' scripts/` → one write at `sync_payload.py` `write_manifest`, no read. `grep -rn "skew\|behind\|last received" scripts/` → nothing. The `NOT syncing` line added in `025423e` (`grep -n "NOT syncing" scripts/publish.py`) reports only within a single run and is not retained. As of `025423e`.
-- **Why it matters:** scoping was added in `025423e`, so this is now reachable by design rather than by accident. It also compounds `BL-03` — a repository that gitignores `.claude/` is already reported as a success while receiving nothing, and both failures look identical from the central side: a green run and a repository that never got the payload.
-- **Not purely central.** From the receiving end there is no signal at all: a skipped repository gets no pull request, so there is no artifact in which "you were excluded" could appear. Its only trace is a manifest `version` string nobody compares.
-- **Done when:** a run reports, for **every enabled target including the ones it did not touch**, the version that repository last received — **and** the report is read-only, adding no write, no new token permission, and no file to any downstream repository, **and** a repository whose manifest is absent is reported distinctly from one that is merely behind, since that is the `BL-03` case rather than this one, **and** an unscoped run where every target is current still reports cleanly rather than emitting noise.
-- **Suggested shape, not binding:** read `.claude/.central-instructions-manifest.json` from each enabled target through the API the token already permits, decode `version`, and print one line per target. Roughly twenty lines, no new permission. Whether it lives in `publish.py`, a separate script, or a workflow step is open.
-- **Depends on:** compounds `BL-03`. Worth doing before staging a rollout across the classroom repositories, because that is when stranding becomes likely rather than theoretical.
-- **Found by:** Downstream advocate, rollout-plan review. **First seen:** 2026-09-15.
-- **Status:** open
 
 ### BL-09 — there is no downstream-side opt-out · `decision` · T3
 
@@ -114,24 +87,7 @@ the payload; its only lever is not merging, and a fresh branch arrives next rele
 - **Found by:** Downstream advocate. **First seen:** 2026-09-15.
 - **Status:** open
 
-### BL-10 — `languages` is parsed and validated but never consulted · `fix` · T2
 
-Both `publish.py` and `validate.py` validate the field; nothing reads it.
-
-- **Evidence:** `grep -rn "languages" scripts/` shows validation and storage only; selection uses `profile` alone. `README.md` already admits it. As of `b14d7fa`.
-- **Done when:** either the field affects distribution, **or** it is removed from both validators and from `README.md` — not left as a schema promise nothing keeps.
-- **Found by:** Plan checker. **First seen:** 2026-09-15.
-- **Status:** open
-
-### BL-11 — `schemaVersion` is written but never read · `fix` · T2
-
-An incompatible future manifest shape will be silently mis-parsed rather than rejected.
-
-- **Evidence:** `grep -rn "schemaVersion" scripts/` → one write in `write_manifest`, no read. As of `b14d7fa`.
-- **Done when:** `load_previous_manifest` rejects a manifest whose `schemaVersion` it does not understand, **and** a manifest at the current version still loads, **and** a manifest with no `schemaVersion` is still handled as today.
-- **Depends on:** interacts with any manifest-shape change; see the manifest rules in `DEVELOPMENT-LOOP.md`.
-- **Found by:** Plan checker. **First seen:** 2026-09-15.
-- **Status:** open
 
 ## The record
 
@@ -170,6 +126,58 @@ untested everywhere, including on the Linux CI runner.
 ## Closed
 
 Closed and declined entries move here with their evidence or reason.
+
+### BL-18 — a repository scoped out of successive releases is stranded silently · `fix` · T3
+
+Staged rollout can leave repositories behind indefinitely, and nothing surfaces it. Each downstream
+repository records the version it last received, but that value is written and never read: no run
+compares it to anything, and no report says which repositories are behind or by how much.
+
+A repository excluded from three consecutive releases produces three green runs and no artifact
+anywhere recording that it was skipped.
+
+- **Evidence:** `grep -rn '"version"' scripts/` → one write at `sync_payload.py` `write_manifest`, no read. `grep -rn "skew\|behind\|last received" scripts/` → nothing. The `NOT syncing` line added in `025423e` (`grep -n "NOT syncing" scripts/publish.py`) reports only within a single run and is not retained. As of `025423e`.
+- **Why it matters:** scoping was added in `025423e`, so this is now reachable by design rather than by accident. It also compounds `BL-03` — a repository that gitignores `.claude/` is already reported as a success while receiving nothing, and both failures look identical from the central side: a green run and a repository that never got the payload.
+- **Not purely central.** From the receiving end there is no signal at all: a skipped repository gets no pull request, so there is no artifact in which "you were excluded" could appear. Its only trace is a manifest `version` string nobody compares.
+- **Done when:** a run reports, for **every enabled target including the ones it did not touch**, the version that repository last received — **and** the report is read-only, adding no write, no new token permission, and no file to any downstream repository, **and** a repository whose manifest is absent is reported distinctly from one that is merely behind, since that is the `BL-03` case rather than this one, **and** an unscoped run where every target is current still reports cleanly rather than emitting noise.
+- **Suggested shape, not binding:** read `.claude/.central-instructions-manifest.json` from each enabled target through the API the token already permits, decode `version`, and print one line per target. Roughly twenty lines, no new permission. Whether it lives in `publish.py`, a separate script, or a workflow step is open.
+- **Depends on:** compounds `BL-03`. Worth doing before staging a rollout across the classroom repositories, because that is when stranding becomes likely rather than theoretical.
+- **Found by:** Downstream advocate, rollout-plan review. **First seen:** 2026-09-15.
+- **Status:** done — every run reports each enabled target's recorded version, including targets it deliberately skipped. Read-only: it fetches `.claude/.central-instructions-manifest.json` through the API with the token's existing contents-read, writes nothing, and creates no file downstream. A target with no manifest reads distinctly from one merely behind, because those are different failures — the former is `BL-03`.
+
+
+### BL-11 — `schemaVersion` is written but never read · `fix` · T2
+
+An incompatible future manifest shape will be silently mis-parsed rather than rejected.
+
+- **Evidence:** `grep -rn "schemaVersion" scripts/` → one write in `write_manifest`, no read. As of `b14d7fa`.
+- **Done when:** `load_previous_manifest` rejects a manifest whose `schemaVersion` it does not understand, **and** a manifest at the current version still loads, **and** a manifest with no `schemaVersion` is still handled as today.
+- **Depends on:** interacts with any manifest-shape change; see the manifest rules in `DEVELOPMENT-LOOP.md`.
+- **Found by:** Plan checker. **First seen:** 2026-09-15.
+- **Status:** done — `MANIFEST_SCHEMA_VERSION` is now read. A manifest declaring a version this code does not understand authorizes no deletion and warns, but delivery continues and the manifest is rewritten at the known shape — the same self-healing treatment a foreign `source` already gets, rather than a hard failure that would strand the repository. An absent `schemaVersion` behaves as before.
+
+
+### BL-10 — `languages` is parsed and validated but never consulted · `fix` · T2
+
+Both `publish.py` and `validate.py` validate the field; nothing reads it.
+
+- **Evidence:** `grep -rn "languages" scripts/` shows validation and storage only; selection uses `profile` alone. `README.md` already admits it. As of `b14d7fa`.
+- **Done when:** either the field affects distribution, **or** it is removed from both validators and from `README.md` — not left as a schema promise nothing keeps.
+- **Found by:** Plan checker. **First seen:** 2026-09-15.
+- **Status:** done — removed from the `Target` dataclass, `publish.py` and `validate.py`. A config still setting it is **rejected** with a pointer to profiles rather than silently ignored, because a silently-ignored key is the same broken promise in a quieter form. `README.md` updated. The pre-existing test asserting the old contract was updated to the new one, which is a contract change recorded here rather than a weakened test.
+
+
+### BL-08 — the PR body does not convey what changed · `fix` · T3
+
+Static apart from `{version}`; says `chore` for behaviour changes; lists no added or removed paths.
+A maintainer can receive a PR whose entire content is deletions, titled with a version they already
+have.
+
+- **Evidence:** `grep -n "PR_BODY_TEMPLATE" -A20 scripts/publish.py`; `grep -n "chore(ai)" scripts/publish.py`. As of `b14d7fa`.
+- **Done when:** the body lists added, modified and removed managed paths for that target, **and** names the profile that produced the selection, **and** a target receiving no changes still opens no PR.
+- **Found by:** Downstream advocate, repeatedly across three reviews. **First seen:** 2026-09-06.
+- **Status:** done — `build_pr_body` and `build_commit_subject` describe the specific change: added, updated and removed paths, the profile the target receives, and any path overwritten that no manifest claimed. A first delivery says so rather than calling itself an update, and the body no longer cites a manifest that arrives in the same pull request. The subject distinguishes an install, an update and a removal-only change.
+
 
 ### BL-02 — `MANAGED_ROOTS` is broader than the documented ownership boundary · `fix` · T3 · **hazard**
 
