@@ -86,6 +86,24 @@ have.
 - **Found by:** Downstream advocate, repeatedly across three reviews. **First seen:** 2026-09-06.
 - **Status:** open
 
+### BL-18 — a repository scoped out of successive releases is stranded silently · `fix` · T3
+
+Staged rollout can leave repositories behind indefinitely, and nothing surfaces it. Each downstream
+repository records the version it last received, but that value is written and never read: no run
+compares it to anything, and no report says which repositories are behind or by how much.
+
+A repository excluded from three consecutive releases produces three green runs and no artifact
+anywhere recording that it was skipped.
+
+- **Evidence:** `grep -rn '"version"' scripts/` → one write at `sync_payload.py` `write_manifest`, no read. `grep -rn "skew\|behind\|last received" scripts/` → nothing. The `NOT syncing` line added in `025423e` (`grep -n "NOT syncing" scripts/publish.py`) reports only within a single run and is not retained. As of `025423e`.
+- **Why it matters:** scoping was added in `025423e`, so this is now reachable by design rather than by accident. It also compounds `BL-03` — a repository that gitignores `.claude/` is already reported as a success while receiving nothing, and both failures look identical from the central side: a green run and a repository that never got the payload.
+- **Not purely central.** From the receiving end there is no signal at all: a skipped repository gets no pull request, so there is no artifact in which "you were excluded" could appear. Its only trace is a manifest `version` string nobody compares.
+- **Done when:** a run reports, for **every enabled target including the ones it did not touch**, the version that repository last received — **and** the report is read-only, adding no write, no new token permission, and no file to any downstream repository, **and** a repository whose manifest is absent is reported distinctly from one that is merely behind, since that is the `BL-03` case rather than this one, **and** an unscoped run where every target is current still reports cleanly rather than emitting noise.
+- **Suggested shape, not binding:** read `.claude/.central-instructions-manifest.json` from each enabled target through the API the token already permits, decode `version`, and print one line per target. Roughly twenty lines, no new permission. Whether it lives in `publish.py`, a separate script, or a workflow step is open.
+- **Depends on:** compounds `BL-03`. Worth doing before staging a rollout across the classroom repositories, because that is when stranding becomes likely rather than theoretical.
+- **Found by:** Downstream advocate, rollout-plan review. **First seen:** 2026-09-15.
+- **Status:** open
+
 ### BL-09 — there is no downstream-side opt-out · `decision` · T3
 
 `profile` is chosen in this repository by the operator. A target repository cannot decline part of
