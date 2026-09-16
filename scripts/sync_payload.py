@@ -17,10 +17,15 @@ MANIFEST_SOURCE = "central-claude-instructions"
 # with distribution.
 MANAGED_ROOTS = (".claude",)
 
-# Every distribution carries this, whatever else a selection excludes. It is the rule that
-# bounds what an agent may do unasked, and it arrives through .claude/skills/, which does not
-# depend on a downstream repository importing anything.
-REQUIRED_PAYLOAD_PATHS = (".claude/skills/shared-agent-floor/SKILL.md",)
+# Every distribution carries these, whatever else a selection excludes. They arrive through
+# .claude/skills/, which a downstream repository discovers on its own -- unlike .claude/shared/**,
+# which loads only where that repository's own instructions import it. Entries follow the same
+# matching rule as a selection prefix: a trailing "/" selects a directory, anything else is an
+# exact path.
+REQUIRED_PAYLOAD_PATHS = (
+    ".claude/skills/shared-agent-floor/",
+    ".claude/skills/shared-development-loop/",
+)
 
 
 class SyncError(RuntimeError):
@@ -158,7 +163,7 @@ def get_payload_files(
         relative_path = path.relative_to(payload_root)
         if (
             include_prefixes is not None
-            and relative_path.as_posix() not in REQUIRED_PAYLOAD_PATHS
+            and not _matches_any_prefix(relative_path, REQUIRED_PAYLOAD_PATHS)
             and not _matches_any_prefix(relative_path, include_prefixes)
         ):
             continue

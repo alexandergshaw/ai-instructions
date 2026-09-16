@@ -12,7 +12,7 @@ it.** An agent that cannot dispatch cannot satisfy that on its own, so do not
 claim the loop ran. Instead:
 
 - Run the stages that are genuinely single-context work — the acceptance
-  criteria, the reuse survey, the plan, the implementation, and the stage 8
+  criteria, the reuse survey, the plan, the implementation, and the step 8
   audit of what landed.
 - **State plainly which checks were not independently performed**, and treat
   their findings as unverified. A pass an author ran over its own work is
@@ -26,21 +26,25 @@ failure the core principle exists to prevent.
 
 ## Model selection
 
-- **Every stage 4 pass and every stage 10 agent takes the highest model
-  available.** These are the roles whose output everything downstream inherits;
-  a miss here is re-litigated by every agent after it.
-- **Implementation takes the faster, cheaper tier. Verification takes the
-  stronger tier.** The implementer and the verifier are never the same agent and
-  never the same model class.
-- **Pin an explicit version, never a bare family alias.** An alias resolves to
-  whatever is newest, which silently changes both cost and behavior between two
-  runs of the same loop.
+Tiers, and the rule about defining agent types rather than overriding a model per call, are in
+`roles.md`.
 
-Where a surface accepts only a family name rather than a version string, say so
-in the report rather than assuming the pin took effect.
+## What actually costs
+
+Two facts that should shape dispatch rather than be rediscovered.
+
+**Output tokens cost several times what input tokens cost.** So **point agents at paths; never paste
+reference text into a brief.** Pasted context is billed as your output to deliver text the agent
+could have read itself. The same applies to artifacts: have the seat write the file, or save what it
+returned byte for byte — never retype it.
+
+**Round count is the only lever with an order of magnitude behind it.** One avoided remediation
+round saves more than any effort or tier adjustment across the whole chunk. Note the tension
+honestly: sharper checkers *cause* more remediation rounds. That is the trade you want, but
+"sharpen the checkers" and "spend less" pull against each other harder than they look.
 
 **This loop is expensive by design.** A change that triggers every role costs
-seven pre-code agents, seven follow-ups at stage 8b, and four at stage 10,
+the design seats at step 2, their follow-ups at step 9, and the review agents at step 12,
 before any implementer. Someone pays for that. Run the roles whose triggers
 actually fire — see `roles.md` — rather than all eleven by reflex, and say what the run will cost
 before starting it.
@@ -51,10 +55,30 @@ before starting it.
 parallel. Seven pre-code passes dispatched one at a time are seven round trips,
 and each one's framing contaminates the next.
 
-**Concurrent agents must hold disjoint file sets**, proven against the real file
-list before dispatch. Every brief names the files the agent owns *and* the files
-its siblings own, with an instruction to stop and report rather than touch one
-of theirs.
+**Disjointness has two halves, and both must hold.**
+
+1. **Exact-path disjointness, computed, never eyeballed.** An item's file set is the files it edits
+   **plus the tests that assert on the behaviour it changes**. Intersect the sets mechanically and
+   show the result; an empty intersection is the evidence, not your reading of the lists.
+2. **Informational independence.** For each pair, list the facts one item's artifacts state that the
+   other's plan cites. A non-empty list means they are coupled however disjoint their files are —
+   sequence them, or extract the shared contract into its own earlier step, alone. **State the list
+   even when it is empty.**
+
+Then a **third check**: every caller and assertion that currently passes *because of* the behaviour
+about to change, each classified **owned** (this item changes it), **adopted** (this item takes
+responsibility for it), or **checked-safe** — the assertion is quoted with its current passing
+output now, and the item's brief names it as one that must be re-run and re-quoted before that item
+reports done. An unquoted "checked-safe" is not one, and one never re-quoted after the change is an
+unverified item rather than a safe one.
+
+**Cap a concurrent wave at two or three items that write.** Larger fan-outs produce duplicated
+discovery — several agents independently finding the same blocker, and one designing a fix for a
+problem a sibling is concurrently proving does not exist. Read-only seats, which hold an empty
+allowed-files list, are independent by construction and dispatch together.
+
+Every brief names the files the agent owns *and* the files its siblings own, with an instruction to
+stop and report rather than touch one of theirs.
 
 **Blind concurrent reviewers to each other's findings.** Two independent passes
 over the same diff beat one pass anchored on the other's conclusions. The
@@ -82,7 +106,7 @@ Every dispatched brief states:
    instruction to stop and report rather than reach outside it.
 6. **No git writes.** Not `stash`, `commit`, `checkout`, `restore`, or `reset`.
    One agent's stash reverts every sibling's work, and a commit mid-wave
-   destroys the check in stage 7.
+   destroys the check at step 8.
 7. **"0 errors AND 0 warnings"**, stated in those terms. An agent told only "no
    errors" reports success over a wall of warnings, including ones it
    introduced.
@@ -94,6 +118,21 @@ Every dispatched brief states:
 A checking role that returns no findings states what it tried to break. A
 checking role whose subject this repository does not have says so in one line
 rather than inventing findings.
+
+## Telling a seat something mid-run
+
+When a ruling moves while a seat is still building on it, **tell that seat while it is running** — a
+message reaches it at its next step and costs far less than a rework round. Never revise criteria
+while a plan is being written against them; hold the revision until the plan lands and fold both
+into one round, or tell the plan's author exactly what is moving.
+
+**Resuming a finished agent is not cheap** — it costs about what a fresh run costs. Batch small
+rulings into the next round instead of reopening a completed one.
+
+## Escalation
+
+The same item failing verification twice from the mid tier gets re-dispatched at the next tier up
+for the remaining rounds. Verification stays at the strongest tier regardless.
 
 ## Verifying what came back
 

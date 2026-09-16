@@ -100,6 +100,21 @@ deleting an entry destroys the only thing it was measuring.
 its pattern never matched anything at all, including the thing it was looking
 for. Every scanner needs a canary case proving it fires on known-bad input.
 
+**Mutation testing without a no-op control.** A harness that reports "killed" unconditionally is
+indistinguishable from a strong suite. Every mutation run includes a mutant that changes nothing and
+**must survive**; if it dies, the harness is broken and the run means nothing.
+
+**The wiring test that is not a behaviour test.** Asserting that a function was *called* stays green
+when the call does nothing downstream. Assert the effect, not the invocation.
+
+**The runner that absorbs a path which does not exist.** Positional arguments are often substring
+filters rather than paths, so a union of them hides every miss behind one hit. Check each path exists
+before trusting a green run — a case naming a file that is gone is not a passing case.
+
+**Whole-tree scans that flake under load.** A test that walks the entire tree becomes timing
+sensitive when several agents are working, and produces a false regression on the next gate anyone
+runs. Give it an explicit, generous timeout.
+
 **The skipped test read as a passing one.** A test skipped for a missing
 platform capability, an absent credential, or an unavailable service is not
 evidence of anything. State which tests skipped and why, rather than reporting

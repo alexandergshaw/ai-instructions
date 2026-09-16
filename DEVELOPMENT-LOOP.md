@@ -172,12 +172,12 @@ Known gaps — real, and not to be described as covered:
   top-level directory, which is broader than the ownership boundary `README.md` describes
   (`.claude/shared/**`, `.claude/skills/shared-*/**`, and the manifest). A manifest naming
   downstream-authored `.claude` content will still delete it. Narrowing the bound to that
-  documented boundary is tracked work.
+  documented boundary is tracked as `BL-02`.
 - **A downstream repository that gitignores `.claude/` is reported as a success while receiving
   nothing.** `repository_has_changes` sees a clean tree and `process_target` returns "no changes",
-  so the target is counted among the successes forever.
+  so the target is counted among the successes forever. Tracked as `BL-03`.
 - **The symlink refusals on the deletion path have no test on any platform**, and the one symlink
-  test that exists covers the copy path and skips on Windows.
+  test that exists covers the copy path and skips on Windows. Tracked as `BL-15`.
 
 ### 6. Peer evaluation (T2 and above)
 
@@ -327,7 +327,10 @@ edited:
 4. Hand whoever applies the fixes **one coherent instruction set** — never two evaluators' raw
    reports to reconcile on their own.
 5. Record every finding not acted on, with its reason, in the same place as the accepted ones, so
-   the record shows what was seen and declined rather than only what was fixed.
+   the record shows what was seen and declined rather than only what was fixed. Where the finding is
+   pre-existing or out of scope rather than a defect in the change under review, it goes to
+   `BACKLOG.md`. **A defect in the change under review is never deferred there** — that is a bypass,
+   and it is easier than either fixing or declining it, which is what makes it tempting.
 
 At T3 the agent applying the fixes is neither of the evaluators that found them. An agent that found
 a problem is the worst judge of whether its own fix is right.

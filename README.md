@@ -122,16 +122,20 @@ everything beneath it; any other prefix must equal a payload path exactly. So
 `.claude/shared/core/` selects that directory, while `.claude/shared/core/eng` selects nothing
 and is rejected rather than quietly matching `engineering.md`.
 
-**Some payload files ship regardless of profile.** `REQUIRED_PAYLOAD_PATHS` in
-`scripts/sync_payload.py` lists them, and today it holds the `shared-agent-floor` skill — the
-rules bounding what an agent may do without being asked. A profile cannot exclude it, and
-validation fails if it is missing from the payload. It travels as a skill because `.claude/skills/`
-is discovered on its own, while `.claude/shared/**` only loads where a downstream `CLAUDE.md`
-imports it.
+**Some payload paths ship regardless of profile.** `REQUIRED_PAYLOAD_PATHS` in
+`scripts/sync_payload.py` lists them, and today it holds two skill directories: `shared-agent-floor`,
+the rules bounding what an agent may do without being asked, and `shared-development-loop`, the
+staged development process. Entries use the same matching rule as a selection prefix. A profile
+cannot exclude them, and validation fails if a required path matches no file.
+
+Both travel as skills because `.claude/skills/` is discovered on its own, while `.claude/shared/**`
+only loads where a downstream `CLAUDE.md` imports it — which most target repositories do not have.
 
 Two profiles ship by default. `standards-only` sends the shared engineering, language and testing
-rules and no skills beyond the floor. `autograded` adds the autograder and standardization skills
-but not the development-loop skill, which is the heaviest thing in the payload.
+rules, plus the two required skills. `autograded` adds the autograder and standardization skills on
+top of those. Neither can exclude the required skills — the development loop is the heaviest thing
+in the payload, and it is delivered everywhere, because a process that reaches only some
+repositories is not a process.
 
 **Narrowing a profile removes files downstream.** The excluded files were recorded in that
 repository's manifest, so the next sync deletes them — the intended way to withdraw something from

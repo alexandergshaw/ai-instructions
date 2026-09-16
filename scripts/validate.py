@@ -183,11 +183,20 @@ def validate_required_payload_paths(payload_root: Path) -> list[str]:
     """Every distribution carries these regardless of profile, so they must exist."""
     if not payload_root.is_dir():
         return []
-    return [
-        f"Required payload file is missing: {required}"
-        for required in REQUIRED_PAYLOAD_PATHS
-        if not (payload_root / required).is_file()
+    delivered = [
+        path.relative_to(payload_root).as_posix()
+        for path in payload_root.rglob("*")
+        if path.is_file()
     ]
+    errors: list[str] = []
+    for required in REQUIRED_PAYLOAD_PATHS:
+        if required.endswith("/"):
+            matched = any(path.startswith(required) for path in delivered)
+        else:
+            matched = required in delivered
+        if not matched:
+            errors.append(f"Required payload path matches no file: {required}")
+    return errors
 
 
 def validate_payload(payload_root: Path) -> list[str]:
@@ -320,6 +329,8 @@ def validate_control_plane(repo_root: Path) -> list[str]:
     required_files = [
         repo_root / "AGENTS.md",
         repo_root / "CLAUDE.md",
+        repo_root / "DEVELOPMENT-LOOP.md",
+        repo_root / "BACKLOG.md",
         repo_root / ".github" / "copilot-instructions.md",
     ]
 

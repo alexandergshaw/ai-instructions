@@ -79,6 +79,7 @@ Rules:
 | --- | --- |
 | How agents work on this repository | `AGENTS.md` |
 | Development procedure and change tiers | `DEVELOPMENT-LOOP.md` |
+| Outstanding work on this repository | `BACKLOG.md` |
 | Claude adapter for this repository | `CLAUDE.md` |
 | Copilot adapter for this repository | `.github/copilot-instructions.md` |
 | Repo-specific Claude rules | `.claude/rules/**` |

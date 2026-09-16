@@ -32,15 +32,18 @@ class ValidateTests(unittest.TestCase):
         (self.repo_root / "AGENTS.md").write_text("agent instructions", encoding="utf-8")
         (self.repo_root / "CLAUDE.md").write_text("@AGENTS.md", encoding="utf-8")
         (self.repo_root / ".github/copilot-instructions.md").write_text("read AGENTS.md", encoding="utf-8")
+        (self.repo_root / "DEVELOPMENT-LOOP.md").write_text("the procedure", encoding="utf-8")
+        (self.repo_root / "BACKLOG.md").write_text("| ID | Kind | Tier |", encoding="utf-8")
         (self.repo_root / "payload/.claude/shared/core/engineering.md").write_text("content", encoding="utf-8")
         (self.repo_root / "payload/.claude/skills/shared-example/SKILL.md").write_text(
             SKILL_FRONTMATTER.format(name="shared-example"), encoding="utf-8"
         )
-        floor = self.repo_root / "payload/.claude/skills/shared-agent-floor"
-        floor.mkdir(parents=True)
-        (floor / "SKILL.md").write_text(
-            SKILL_FRONTMATTER.format(name="shared-agent-floor"), encoding="utf-8"
-        )
+        for required in ("shared-agent-floor", "shared-development-loop"):
+            skill = self.repo_root / f"payload/.claude/skills/{required}"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(
+                SKILL_FRONTMATTER.format(name=required), encoding="utf-8"
+            )
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -53,6 +56,28 @@ class ValidateTests(unittest.TestCase):
     def test_valid_repository_layout_passes(self) -> None:
         self.write_targets({"targets": [{"repo": "owner/repository", "enabled": True}]})
         self.assertEqual(validate_repository(self.repo_root), [])
+
+    def test_missing_backlog_is_rejected(self) -> None:
+        """The durable queue is a control-plane file; losing it loses the queue."""
+        (self.repo_root / "BACKLOG.md").unlink()
+
+        errors = validate_control_plane(self.repo_root)
+
+        self.assertTrue(any("BACKLOG.md" in error for error in errors))
+
+    def test_empty_backlog_is_rejected(self) -> None:
+        (self.repo_root / "BACKLOG.md").write_text("   \n", encoding="utf-8")
+
+        errors = validate_control_plane(self.repo_root)
+
+        self.assertTrue(any("BACKLOG.md" in error for error in errors))
+
+    def test_missing_development_loop_is_rejected(self) -> None:
+        (self.repo_root / "DEVELOPMENT-LOOP.md").unlink()
+
+        errors = validate_control_plane(self.repo_root)
+
+        self.assertTrue(any("DEVELOPMENT-LOOP.md" in error for error in errors))
 
     def test_missing_agents_file_is_rejected(self) -> None:
         (self.repo_root / "AGENTS.md").unlink()
@@ -115,11 +140,13 @@ class ValidateTests(unittest.TestCase):
         """The floor ships with every distribution, so its absence is a build error."""
         from validate import validate_required_payload_paths
 
-        (self.repo_root / "payload/.claude/skills/shared-agent-floor/SKILL.md").unlink()
+        import shutil
+
+        shutil.rmtree(self.repo_root / "payload/.claude/skills/shared-agent-floor")
 
         errors = validate_required_payload_paths(self.repo_root / "payload")
 
-        self.assertTrue(any("Required payload file is missing" in error for error in errors))
+        self.assertTrue(any("matches no file" in error for error in errors))
 
     def test_profile_with_one_dead_prefix_is_rejected(self) -> None:
         from validate import validate_profiles
