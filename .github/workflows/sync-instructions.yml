@@ -40,13 +40,36 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Collect enabled target repositories
+        id: targets
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          with open("config/targets.json", encoding="utf-8") as handle:
+              data = json.load(handle)
+          names = [
+              t["repo"].split("/", 1)[1]
+              for t in data.get("targets", [])
+              if isinstance(t, dict) and isinstance(t.get("repo"), str) and t.get("enabled", True)
+          ]
+          # An empty list would scope the token to this repository alone, which is the safe
+          # failure: publish.py then reports no enabled targets and exits cleanly.
+          print("repositories=" + ",".join(names))
+          PY
+
       - name: Create GitHub App installation token
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.CLAUDE_SYNC_APP_CLIENT_ID }}
+          client-id: ${{ vars.CLAUDE_SYNC_APP_CLIENT_ID }}
           owner: ${{ vars.CLAUDE_SYNC_INSTALLATION_OWNER }}
           private-key: ${{ secrets.CLAUDE_SYNC_APP_PRIVATE_KEY }}
+          # Scoped to the enabled targets rather than every repository this owner has.
+          # Derived from config/targets.json so adding a target needs no second edit here.
+          repositories: ${{ steps.targets.outputs.repositories }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-metadata: read
 
       - name: Install GitHub CLI
         run: |
@@ -59,11 +82,14 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          VERSION_INPUT: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
-          elif [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
+          if [ "$EVENT_NAME" = "release" ]; then
+            VERSION="$RELEASE_TAG"
+          elif [ -n "$VERSION_INPUT" ]; then
+            VERSION="$VERSION_INPUT"
           else
             SHORT_SHA="$(git rev-parse --short HEAD)"
             VERSION="manual-${SHORT_SHA}"

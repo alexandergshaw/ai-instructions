@@ -83,26 +83,7 @@ counted among the successes — indefinitely.
 
 ## Workflow security
 
-### BL-04 — the App token is scoped to every repository the owner has · `fix` · T3 · **hazard**
 
-`create-github-app-token` is passed `owner:` with no `repositories:`, so the minted token carries
-the App's full permissions across the whole installation rather than the targets being synced.
-
-- **Evidence:** `grep -n "owner:" .github/workflows/sync-instructions.yml`; the action's own docs state that `owner` without `repositories` creates a token for all repositories owned by that owner. As of `b14d7fa`.
-- **Why it matters:** `.claude/rules/github-actions.md` requires least privilege, and this token is handed to shell steps.
-- **Done when:** the token is scoped to the enabled targets, **and** a target added to `config/targets.json` does not require a second manual edit to become reachable.
-- **Found by:** External contract seat. **First seen:** 2026-09-15.
-- **Status:** open
-
-### BL-05 — workflow inputs are interpolated directly into `run:` shell · `fix` · T3 · **hazard**
-
-`${{ inputs.version }}` and `${{ github.event.release.tag_name }}` are expanded into shell source in
-a step that holds the App token from BL-04.
-
-- **Evidence:** `grep -n 'inputs.version\|tag_name' .github/workflows/sync-instructions.yml`. As of `b14d7fa`.
-- **Done when:** both values reach the script through `env:` and are referenced as quoted shell variables, **and** the derived version string is unchanged for a normal release and a normal dispatch.
-- **Found by:** External contract seat. **First seen:** 2026-09-15.
-- **Status:** open
 
 ### BL-06 — pinned actions use mutable major tags rather than commit SHAs · `decision` · T3
 
@@ -113,16 +94,6 @@ A tag repoint by a third party would reach a workflow holding the token from BL-
 - **Found by:** External contract seat. **First seen:** 2026-09-15.
 - **Status:** open
 
-### BL-07 — `app-id:` is deprecated in `create-github-app-token@v3` · `fix` · T3
-
-`client-id:` is the current input name. The present form works but emits a deprecation annotation on
-every run, and the input name contradicts the variable name it is given.
-
-- **Evidence:** `grep -n "app-id:" .github/workflows/sync-instructions.yml` → fed from `vars.CLAUDE_SYNC_APP_CLIENT_ID`. As of `b14d7fa`.
-- **Why T3 despite being one word:** it edits `sync-instructions.yml`, a named T3 trigger, on the authentication path.
-- **Done when:** the workflow uses `client-id:`, **and** a dispatch still mints a token successfully.
-- **Found by:** External contract seat. **First seen:** 2026-09-15.
-- **Status:** open
 
 ## Distribution ergonomics
 
@@ -168,31 +139,22 @@ An incompatible future manifest shape will be silently mis-parsed rather than re
 
 ## The record
 
-### BL-12 — `VERSION` has not moved for a payload that grew substantially · `decision` · T2
-
-No release has been cut. `AGENTS.md` classifies materially different mandatory downstream agent
-behaviour as MAJOR.
-
-- **Evidence:** `cat VERSION` → `0.1.0`; `git tag` → empty. As of `b14d7fa`.
-- **Done when:** the owner records a version-impact ruling in this entry. **No `VERSION` edit, tag, or release is part of this entry under any circumstance** — `AGENTS.md` forbids releasing without an explicit request, and publishing a release triggers distribution to every enabled target.
-- **Found by:** Downstream advocate. **First seen:** 2026-09-15.
-- **Status:** open
-
-### BL-13 — rules stated in more than one payload file · `investigation` · T2
-
-A payload-prose review counted roughly twelve rules appearing in two or more distributed files, with
-a proposed canonical location for each. The table itself was not preserved.
-
-- **Evidence:** not preserved — the finding outlived its artifact, which is the failure this file exists to prevent. Re-derive with a duplication pass over `payload/.claude/`, starting from the rules most likely to drift: the floor, no-git-writes, disjointness, controls, tests-must-fail, and the adversarial framing.
-- **Done when:** the duplicate set is enumerated with `file:line` for each occurrence and a named canonical copy, recorded **in this entry**. Deduplication itself is a separate entry, because reducing a rule to a pointer may change what an instruction requires, which would make it MAJOR.
-- **Found by:** Payload prose seat. **First seen:** 2026-09-15.
-- **Status:** open
-
 ### BL-14 — "the gates" is used in distributed prose without being defined downstream · `fix` · T2
 
 - **Evidence:** `grep -rn "the gates" payload/`. As of `b14d7fa`.
 - **Done when:** each use either names what the gates are for that repository, or defers to the repository's own validation, test and build checks. No distributed instruction refers to an undefined term.
 - **Found by:** Payload prose seat. **First seen:** 2026-09-15.
+- **Status:** open
+
+### BL-17 — deduplicate the four rules BL-13 identified · `fix` · T2
+
+Each is stated twice in the payload. A rule in two files drifts — the payload says so itself.
+
+- **Evidence:** the four pairs enumerated in BL-13, with canonical copies named. As of `8553018`.
+- **Done when:** each rule is stated once at its canonical location and referenced by path elsewhere, **and** the git-write extension in `shared-development-loop/SKILL.md` (covering `stash`/`checkout`/`restore`/`reset`, which the floor does not) survives the merge, **and** no cross-reference points at a file the reader's profile does not deliver — `tests/test_delivery.py` covers that last one.
+- **Why it may be MAJOR:** reducing a rule to a pointer can change what an instruction requires. Re-derive the version impact at step 0.
+- **Depends on:** BL-13 (done).
+- **Found by:** BL-13 investigation. **First seen:** 2026-09-15.
 - **Status:** open
 
 ## Test coverage
@@ -212,6 +174,63 @@ untested everywhere, including on the Linux CI runner.
 ## Closed
 
 Closed and declined entries move here with their evidence or reason.
+
+### BL-07 — `app-id:` is deprecated in `create-github-app-token@v3` · `fix` · T3
+
+`client-id:` is the current input name. The present form works but emits a deprecation annotation on
+every run, and the input name contradicts the variable name it is given.
+
+- **Evidence:** `grep -n "app-id:" .github/workflows/sync-instructions.yml` → fed from `vars.CLAUDE_SYNC_APP_CLIENT_ID`. As of `b14d7fa`.
+- **Why T3 despite being one word:** it edits `sync-instructions.yml`, a named T3 trigger, on the authentication path.
+- **Done when:** the workflow uses `client-id:`, **and** a dispatch still mints a token successfully.
+- **Found by:** External contract seat. **First seen:** 2026-09-15.
+- **Status:** done — `client-id:` replaces `app-id:`. Confirmed at the action's `action.yml` that `app-id` carries `deprecationMessage: "Use 'client-id' instead."`
+
+
+### BL-05 — workflow inputs are interpolated directly into `run:` shell · `fix` · T3 · **hazard**
+
+`${{ inputs.version }}` and `${{ github.event.release.tag_name }}` are expanded into shell source in
+a step that holds the App token from BL-04.
+
+- **Evidence:** `grep -n 'inputs.version\|tag_name' .github/workflows/sync-instructions.yml`. As of `b14d7fa`.
+- **Done when:** both values reach the script through `env:` and are referenced as quoted shell variables, **and** the derived version string is unchanged for a normal release and a normal dispatch.
+- **Found by:** External contract seat. **First seen:** 2026-09-15.
+- **Status:** done — `github.event_name`, `github.event.release.tag_name` and `inputs.version` now reach the script through `env:` and are referenced as quoted shell variables. Verified no `${{ }}` interpolation remains inside any `run:` block.
+
+
+### BL-04 — the App token is scoped to every repository the owner has · `fix` · T3 · **hazard**
+
+`create-github-app-token` is passed `owner:` with no `repositories:`, so the minted token carries
+the App's full permissions across the whole installation rather than the targets being synced.
+
+- **Evidence:** `grep -n "owner:" .github/workflows/sync-instructions.yml`; the action's own docs state that `owner` without `repositories` creates a token for all repositories owned by that owner. As of `b14d7fa`.
+- **Why it matters:** `.claude/rules/github-actions.md` requires least privilege, and this token is handed to shell steps.
+- **Done when:** the token is scoped to the enabled targets, **and** a target added to `config/targets.json` does not require a second manual edit to become reachable.
+- **Found by:** External contract seat. **First seen:** 2026-09-15.
+- **Status:** done — the workflow now derives the enabled target list from `config/targets.json` and passes it as `repositories:`, with `permission-contents: write`, `permission-pull-requests: write` and `permission-metadata: read`. Verified the derivation yields `instructions-sync-test` alone, and that an empty list falls back to this repository only, which is the safe failure. `repositories` format confirmed at the action's own `action.yml`: comma or newline-separated.
+
+
+### BL-12 — `VERSION` has not moved for a payload that grew substantially · `decision` · T2
+
+No release has been cut. `AGENTS.md` classifies materially different mandatory downstream agent
+behaviour as MAJOR.
+
+- **Evidence:** `cat VERSION` → `0.1.0`; `git tag` → empty. As of `b14d7fa`.
+- **Ruling (owner, 2026-09-15):** MAJOR. Released as `v1.0.0`.
+- **Found by:** Downstream advocate. **First seen:** 2026-09-15.
+- **Status:** done — `VERSION` set to `1.0.0` and tagged `v1.0.0` on explicit request.
+
+### BL-13 — rules stated in more than one payload file · `investigation` · T2
+
+- **Evidence:** re-derived by extracting 7- and 9-word normalised phrases from every file under `payload/.claude/` and intersecting across files. 11 file pairs share verbatim text; **4 are genuine rule duplication**, the rest are a headline-plus-pointer, parallel per-language phrasing, or a skill description restating its own trigger boundary. As of `8553018`.
+- **Found:** the earlier review's "roughly twelve" counted shared phrases, not duplicated rules. The actionable set is four:
+  1. *"A divergence from the design is not automatically a defect"* — full paragraph at `roles.md:117` and `SKILL.md:189`. **Canonical: `roles.md`**, where the role's behaviour is defined; step 9 should point at it.
+  2. The returning-wave spot-check — *"if an agent says it reused an existing helper, grep for it"* — at `subagent-execution.md:141` and `traps.md:46`. **Canonical: `subagent-execution.md`**, which owns dispatch mechanics.
+  3. *"a criterion satisfied by a comment containing the right words measures nothing"* at `SKILL.md:49` and `traps.md:9`. **Canonical: `traps.md`**, where it is the named trap "zero-power measurements".
+  4. *"a permission configuration that allows a command is not a request to run it"* at `shared-agent-floor/SKILL.md:19` and `shared-development-loop/SKILL.md:60`. **Canonical: the floor.** Note this one is not pure duplication — the loop applies the sentence to `stash`/`checkout`/`restore`/`reset`, which the floor does not cover. Deduplicating it must not drop that extension.
+- **Also found, judged not duplication:** the assignment-file-shape guard appears in `repo-structure.md:8`, `SKILL.md` step 8, and the `shared-standardize-repository` description — three statements, but the third is a skill description declaring its own boundary and the second is an application in context. Worth a second opinion rather than a silent merge.
+- **Status:** done — findings recorded above. Deduplication itself is `BL-17`, kept separate because reducing a rule to a pointer may change what an instruction requires, which would make it MAJOR.
+
 
 ### BL-16 — `validate.py` does not require `DEVELOPMENT-LOOP.md` as a control-plane file · `fix` · T2
 
