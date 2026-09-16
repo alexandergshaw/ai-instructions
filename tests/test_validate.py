@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from validate import validate_control_plane, validate_payload, validate_repository, validate_targets_config  # noqa: E402
+from validate import validate_control_plane, validate_workflow_pins, validate_payload, validate_repository, validate_targets_config  # noqa: E402
 
 
 SKILL_FRONTMATTER = """---
@@ -368,3 +368,51 @@ class ValidateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkflowPinningTests(unittest.TestCase):
+    """BL-06: an action pinned to a movable tag runs whatever that tag points at today."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.root = Path(self.temp_dir.name)
+        self.workflows = self.root / ".github" / "workflows"
+        self.workflows.mkdir(parents=True)
+
+    def write(self, uses: str) -> None:
+        body = "\n".join(
+            ["jobs:", "  build:", "    steps:", f"      - uses: {uses}", ""]
+        )
+        (self.workflows / "sync.yml").write_text(body, encoding="utf-8")
+
+    def test_a_movable_major_tag_is_rejected(self) -> None:
+        self.write("actions/checkout@v4")
+        errors = validate_workflow_pins(self.root)
+        self.assertTrue(errors)
+        self.assertIn("actions/checkout@v4", errors[0])
+
+    def test_a_branch_or_semver_tag_is_rejected_too(self) -> None:
+        for movable in ("actions/checkout@main", "actions/checkout@v4.2.2"):
+            with self.subTest(ref=movable):
+                self.write(movable)
+                self.assertTrue(validate_workflow_pins(self.root))
+
+    def test_a_full_commit_sha_is_accepted(self) -> None:
+        self.write("actions/checkout@" + "1" * 40 + "  # v4.4.0")
+        self.assertEqual(validate_workflow_pins(self.root), [])
+
+    def test_a_short_sha_is_not_good_enough(self) -> None:
+        """A 7-char prefix is ambiguous and far cheaper to forge than a full SHA."""
+        self.write("actions/checkout@" + "1" * 7)
+        self.assertTrue(validate_workflow_pins(self.root))
+
+    def test_a_local_or_docker_reference_is_not_treated_as_an_action_pin(self) -> None:
+        for local in ("./.github/actions/thing", "docker://alpine:3.19"):
+            with self.subTest(ref=local):
+                self.write(local)
+                self.assertEqual(validate_workflow_pins(self.root), [])
+
+    def test_the_real_workflows_are_pinned(self) -> None:
+        self.assertEqual(validate_workflow_pins(Path(__file__).resolve().parents[1]), [])
+

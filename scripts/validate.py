@@ -345,9 +345,47 @@ def validate_control_plane(repo_root: Path) -> list[str]:
     return errors
 
 
+COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+USES_PATTERN = re.compile(r"^\s*-?\s*uses:\s*(\S+)", re.MULTILINE)
+
+
+def validate_workflow_pins(repo_root: Path) -> list[str]:
+    """Every third-party action must be pinned to a full commit SHA.
+
+    A major tag like `@v4` is movable: whoever controls the action decides what runs, after
+    review. That matters more here than in most repositories, because these workflows hold a
+    GitHub App token for repositories this project does not own. A full SHA is the only ref a
+    third party cannot repoint.
+
+    Local (`./...`) and container (`docker://...`) references are not tag-pinned actions and are
+    left alone.
+    """
+    errors: list[str] = []
+    workflow_dir = repo_root / ".github" / "workflows"
+    if not workflow_dir.is_dir():
+        return errors
+
+    for workflow in sorted(workflow_dir.glob("*.yml")) + sorted(workflow_dir.glob("*.yaml")):
+        text = workflow.read_text(encoding="utf-8")
+        relative = workflow.relative_to(repo_root).as_posix()
+        for reference in USES_PATTERN.findall(text):
+            if reference.startswith("./") or reference.startswith("docker://"):
+                continue
+            _, separator, ref = reference.partition("@")
+            if not separator:
+                errors.append(f"{relative}: action reference has no version: {reference}")
+            elif not COMMIT_SHA_PATTERN.fullmatch(ref):
+                errors.append(
+                    f"{relative}: action must be pinned to a full 40-character commit SHA, "
+                    f"not a movable ref: {reference}"
+                )
+    return errors
+
+
 def validate_repository(repo_root: Path) -> list[str]:
     errors: list[str] = []
     errors.extend(validate_control_plane(repo_root))
+    errors.extend(validate_workflow_pins(repo_root))
     errors.extend(validate_targets_config(repo_root / "config" / "targets.json"))
     errors.extend(
         validate_profiles(

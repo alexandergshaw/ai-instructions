@@ -52,15 +52,6 @@ needs re-verification before work).
 
 
 
-### BL-06 — pinned actions use mutable major tags rather than commit SHAs · `decision` · T3
-
-A tag repoint by a third party would reach a workflow holding the token from BL-04.
-
-- **Evidence:** `grep -n "uses:" .github/workflows/sync-instructions.yml` → `@v4`, `@v5`, `@v3`. As of `b14d7fa`.
-- **Done when:** the owner records a ruling in this entry on SHA-pinning versus tag-pinning, weighing supply-chain risk against the maintenance cost of updating pins. No workflow edit is part of this entry.
-- **Found by:** External contract seat. **First seen:** 2026-09-15.
-- **Status:** open
-
 
 ## Distribution ergonomics
 
@@ -106,22 +97,6 @@ Each is stated twice in the payload. A rule in two files drifts — the payload 
 
 ## Test coverage
 
-### BL-19 — no test exercises `process_target` end to end against a real remote · `investigation` · T3
-
-Two defects lived in `process_target` undetected while the suite stayed green: an unbound `subject`
-that raised `NameError` on every new-PR path, and a visibility check placed in the wrong branch. The
-tests added since stub the network edges — cloning, pushing and the `gh` calls — so anything wrong
-in what is actually sent to `gh` still surfaces for the first time during a real distribution run.
-
-- **Evidence:** `grep -n "def _run_process_target" -A12 tests/test_publish.py` shows which edges are
-  stubbed. As of the working tree that closed `BL-03`.
-- **Why it matters:** this is the function that pushes branches and opens pull requests in
-  repositories this project does not own.
-- **Done when:** it is recorded whether a dedicated throwaway GitHub repository should carry an
-  integration check, or whether the stubbed seam plus the External contract seat is the accepted
-  bound. No production, classroom or active repository is used either way.
-- **Found by:** Remediation, BL-03 closure. **First seen:** 2026-09-15.
-- **Status:** open
 
 ### BL-20 — could `validate.py` catch a defined term used in `payload/` without its definition · `investigation` · T2
 
@@ -145,6 +120,34 @@ surface.
 ## Closed
 
 Closed and declined entries move here with their evidence or reason.
+
+### BL-19 — no test exercises `process_target` end to end against a real remote · `investigation` · T3
+
+Two defects lived in `process_target` undetected while the suite stayed green: an unbound `subject`
+that raised `NameError` on every new-PR path, and a visibility check placed in the wrong branch. The
+tests added since stub the network edges — cloning, pushing and the `gh` calls — so anything wrong
+in what is actually sent to `gh` still surfaces for the first time during a real distribution run.
+
+- **Evidence:** `grep -n "def _run_process_target" -A12 tests/test_publish.py` shows which edges are
+  stubbed. As of the working tree that closed `BL-03`.
+- **Why it matters:** this is the function that pushes branches and opens pull requests in
+  repositories this project does not own.
+- **Done when:** it is recorded whether a dedicated throwaway GitHub repository should carry an
+  integration check, or whether the stubbed seam plus the External contract seat is the accepted
+  bound. No production, classroom or active repository is used either way.
+- **Found by:** Remediation, BL-03 closure. **First seen:** 2026-09-15.
+- **Status:** decided — owner ruled: accept the stubbed seam. The unit tests drive `process_target` with the network edges stubbed, and the remaining risk — what is actually sent to `gh` — is carried by the External contract seat, which verifies subcommands and flags against the vendor's documentation, and by integration runs against `instructions-sync-test`. This is a recorded bound, not an open gap: a live integration test would need real tokens and would be the only test able to fail for reasons unrelated to this code. Revisit only if a real distribution run fails in a way both those controls missed.
+
+
+### BL-06 — pinned actions use mutable major tags rather than commit SHAs · `decision` · T3
+
+A tag repoint by a third party would reach a workflow holding the token from BL-04.
+
+- **Evidence:** `grep -n "uses:" .github/workflows/sync-instructions.yml` → `@v4`, `@v5`, `@v3`. As of `b14d7fa`.
+- **Done when:** the owner records a ruling in this entry on SHA-pinning versus tag-pinning, weighing supply-chain risk against the maintenance cost of updating pins. No workflow edit is part of this entry.
+- **Found by:** External contract seat. **First seen:** 2026-09-15.
+- **Status:** done — owner ruled: SHA-pin. All six references across both workflows now name a full 40-character commit SHA with the human-readable tag in a trailing comment, so an upgrade stays reviewable. Pins were resolved from GitHub's own API and each was confirmed to be a real commit, not recollection: `actions/checkout` v4.4.0, `actions/setup-python` v5.6.0, `actions/create-github-app-token` v3.2.0. Each stays within its current major — SHA-pinning must not smuggle in a major upgrade, and `checkout` is now at v7. A new `validate_workflow_pins` rule rejects any movable ref, with negative tests covering a major tag, a branch, an exact semver tag and a short SHA; local and `docker://` references are excluded.
+
 
 ### BL-09 — there is no downstream-side opt-out · `decision` · T3
 
