@@ -94,10 +94,15 @@ Each is stated twice in the payload. A rule in two files drifts — the payload 
 
 - **Evidence:** the four pairs enumerated in BL-13, with canonical copies named. As of `8553018`.
 - **Done when:** each rule is stated once at its canonical location and referenced by path elsewhere, **and** the git-write extension in `shared-development-loop/SKILL.md` (covering `stash`/`checkout`/`restore`/`reset`, which the floor does not) survives the merge, **and** no cross-reference points at a file the reader's profile does not deliver — `tests/test_delivery.py` covers that last one.
-- **Why it may be MAJOR:** reducing a rule to a pointer can change what an instruction requires. Re-derive the version impact at step 0.
-- **Depends on:** BL-13 (done).
-- **Found by:** BL-13 investigation. **First seen:** 2026-09-15.
-- **Status:** open
+- **Why it may be MAJOR:** reducing a rule to a pointer can change what an instruction requires. Re-derive the version impact at step 0. An attempt was classified **PATCH** by the Classification seat on the grounds that every operative rule stayed at point of use and only rationale moved. That ruling stands for the diff it judged; it does not survive the premise problem below.
+- **Depends on:** BL-13 (done, and **incomplete** — see below).
+- **Attempted 2026-09-15, reverted before commit.** Four seats found the entry's own contract unsound. The attempt is preserved as a patch outside the repository; it is not a base to resume from. Three findings are upstream of the implementation:
+  1. **The pointers are unreachable by the dispatch rules in the same skill.** `subagent-execution.md` tells a dispatched seat to "stop and report rather than reach outside" its file allow-list, and read-only seats are given an **empty** one. So converting an inline rule to a cross-file pointer removes it from every scoped seat that is not handed the target file. This objection applies to **all four** deduplications, not to any one of them, and it is the reason the entry cannot be executed as written.
+  2. **Rule 4 has a third copy**, at `subagent-execution.md` ("**No git writes.** Not `stash`, `commit`, `checkout`, `restore`, or `reset`"), which `BL-13` did not find. "Stated once at its canonical location" is unreachable while the enumeration names two of three sites.
+  3. **There is at least a fifth duplicated rule.** "a failed instrument is invalid, not zero" is in both `SKILL.md` and `traps.md`. The attempt pointered one half of a sentence and left the other half duplicated inline, which reads incoherently — evidence that `BL-13`'s count of four is the wrong contract to build on.
+- **Done when (revised):** `BL-13`'s enumeration is re-derived to completion — every duplicated rule, every site, not a sample — **and** the owner rules on finding 1, because a pointer that a scoped seat may not follow is a worse instruction than a duplicate. Deduplication does not proceed before that ruling.
+- **Found by:** BL-13 investigation. Premise defects found by the Downstream advocate and Payload prose seats, 2026-09-15.
+- **Status:** blocked — needs a decision on finding 1 and a re-run of `BL-13`.
 
 ## Test coverage
 
@@ -299,6 +304,7 @@ behaviour as MAJOR.
   4. *"a permission configuration that allows a command is not a request to run it"* at `shared-agent-floor/SKILL.md:19` and `shared-development-loop/SKILL.md:60`. **Canonical: the floor.** Note this one is not pure duplication — the loop applies the sentence to `stash`/`checkout`/`restore`/`reset`, which the floor does not cover. Deduplicating it must not drop that extension.
 - **Also found, judged not duplication:** the assignment-file-shape guard appears in `repo-structure.md:8`, `SKILL.md` step 8, and the `shared-standardize-repository` description — three statements, but the third is a skill description declaring its own boundary and the second is an application in context. Worth a second opinion rather than a silent merge.
 - **Status:** done — findings recorded above. Deduplication itself is `BL-17`, kept separate because reducing a rule to a pointer may change what an instruction requires, which would make it MAJOR.
+- **Correction, 2026-09-15:** the enumeration is **incomplete**. `BL-17`'s attempt found a third copy of rule 4 in `subagent-execution.md` and a fifth duplicated rule ("a failed instrument is invalid, not zero", in `SKILL.md` and `traps.md`). The method — intersecting 7- and 9-word normalised phrases — misses a rule restated in different words, which is most of them. Recorded here rather than by reopening the entry, because the finding is about the method and belongs with it.
 
 
 ### BL-16 — `validate.py` does not require `DEVELOPMENT-LOOP.md` as a control-plane file · `fix` · T2
