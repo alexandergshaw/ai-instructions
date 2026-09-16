@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import fnmatch
 import shutil
 import sys
 from pathlib import Path
@@ -10,12 +11,21 @@ from typing import Any
 MANIFEST_RELATIVE_PATH = Path(".claude/.central-instructions-manifest.json")
 MANIFEST_SOURCE = "central-claude-instructions"
 
-# Top-level downstream directories this system is permitted to delete from. The manifest that
-# authorizes deletions lives inside the downstream repository, so it is untrusted input: it can be
-# corrupted or hand-edited, and without this bound it could name any repository-relative path.
-# Extend this tuple only alongside the corresponding payload area, so that cleanup stays symmetric
-# with distribution.
-MANAGED_ROOTS = (".claude",)
+# The area this system owns downstream, and therefore the only area it may delete from or write
+# into. This is the boundary README documents -- not the whole of `.claude/`, which also holds
+# content the downstream repository authored for itself.
+#
+# The manifest that authorizes deletions lives inside the downstream repository, so it is untrusted
+# input: it can be corrupted or hand-edited, and without this bound it could name any path.
+#
+# A pattern ending in "/" selects a directory and everything beneath it. Any other pattern must
+# equal a full path. Matching is per path component, and "*" is allowed within one component --
+# so `.claude/skills/shared-*/` covers every distributed skill and no locally authored one.
+MANAGED_AREAS = (
+    ".claude/shared/",
+    ".claude/skills/shared-*/",
+    ".claude/.central-instructions-manifest.json",
+)
 
 # Every distribution carries these, whatever else a selection excludes. They arrive through
 # .claude/skills/, which a downstream repository discovers on its own -- unlike .claude/shared/**,
@@ -46,7 +56,7 @@ def _build_managed_path(relative_path: Path, repo_root: Path) -> Path:
 
 
 def managed_area_description() -> str:
-    return ", ".join(f"{root}/" for root in MANAGED_ROOTS)
+    return ", ".join(MANAGED_AREAS)
 
 
 def _matches_any_prefix(relative_path: Path, prefixes: tuple[str, ...]) -> bool:
@@ -81,9 +91,23 @@ def selection_prefix_error(prefix: str) -> str | None:
     return None
 
 
-def _is_within_managed_roots(relative_path: Path) -> bool:
+def _matches_area(relative_path: Path, pattern: str) -> bool:
+    """Match a path against one area pattern, per component, allowing "*" within a component."""
     parts = relative_path.parts
-    return bool(parts) and parts[0] in MANAGED_ROOTS
+    segments = pattern.rstrip("/").split("/")
+    if pattern.endswith("/"):
+        if len(parts) <= len(segments):
+            return False  # the pattern names a directory, so the path must be inside it
+        candidate = parts[: len(segments)]
+    else:
+        if len(parts) != len(segments):
+            return False
+        candidate = parts
+    return all(fnmatch.fnmatchcase(part, seg) for part, seg in zip(candidate, segments))
+
+
+def _is_within_managed_area(relative_path: Path) -> bool:
+    return any(_matches_area(relative_path, pattern) for pattern in MANAGED_AREAS)
 
 
 def _deletion_refusal_reason(relative_name: str, repo_root: Path) -> str | None:
@@ -97,7 +121,7 @@ def _deletion_refusal_reason(relative_name: str, repo_root: Path) -> str | None:
         return "entry is empty"
 
     relative_path = Path(relative_name)
-    if not _is_within_managed_roots(relative_path):
+    if not _is_within_managed_area(relative_path):
         return f"entry is outside the managed area ({managed_area_description()})"
 
     try:
@@ -224,8 +248,8 @@ def remove_stale_files(
         destination = repo_root / relative_path
         if destination.is_file():
             destination.unlink()
-            # Stop at the entry's own managed root so cleanup stays correct if MANAGED_ROOTS grows.
-            remove_empty_parents(destination, (repo_root / relative_path.parts[0]).resolve(), repo_root)
+            # Stop at `.claude`, which is never removed, and never walk past the repository.
+            remove_empty_parents(destination, (repo_root / ".claude").resolve(), repo_root)
 
     return skipped
 
@@ -235,7 +259,7 @@ def copy_payload(
 ) -> list[Path]:
     copied_files: list[Path] = []
     for relative_path in get_payload_files(payload_root, include_prefixes):
-        if not _is_within_managed_roots(relative_path):
+        if not _is_within_managed_area(relative_path):
             raise SyncError(
                 f"Payload file is outside the managed area ({managed_area_description()}): "
                 f"{relative_path.as_posix()}"
@@ -266,12 +290,30 @@ def write_manifest(repo_root: Path, version: str, files: list[Path]) -> None:
     manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def detect_adoptions(
+    current_files: list[Path], previous_files: list[str], repo_root: Path
+) -> list[str]:
+    """Payload destinations that already exist downstream but no manifest claimed.
+
+    Either the downstream repository authored a file at a path this system owns, or a previous
+    manifest became unreadable -- after a `source` change, for instance. The two are
+    indistinguishable from the filesystem, so neither is refused: both are reported.
+    """
+    previously_claimed = set(previous_files)
+    return [
+        relative_path.as_posix()
+        for relative_path in current_files
+        if relative_path.as_posix() not in previously_claimed
+        and (repo_root / relative_path).exists()
+    ]
+
+
 def sync_payload(
     payload_root: Path,
     repo_root: Path,
     version: str,
     include_prefixes: tuple[str, ...] | None = None,
-) -> None:
+) -> list[str]:
     """Synchronize the payload into repo_root.
 
     include_prefixes limits distribution to part of the payload. Narrowing it between runs
@@ -282,15 +324,26 @@ def sync_payload(
     previous_files = [str(item) for item in previous_manifest.get("files", [])]
     current_files = get_payload_files(payload_root, include_prefixes)
 
+    adopted = detect_adoptions(current_files, previous_files, repo_root)
+    for relative_name in adopted:
+        print(
+            f"WARNING: overwriting {relative_name!r}, which exists downstream but no manifest "
+            "claimed. It is inside the area this system owns, so the write proceeds -- but it is "
+            "reported rather than silent.",
+            file=sys.stderr,
+        )
+
     remove_stale_files(previous_files, current_files, repo_root)
-    copied_files = copy_payload(payload_root, repo_root, include_prefixes)
-    write_manifest(repo_root, version, copied_files)
+    copy_payload(payload_root, repo_root, include_prefixes)
+    write_manifest(repo_root, version, current_files)
+    return adopted
 
 
 __all__ = [
-    "MANAGED_ROOTS",
+    "MANAGED_AREAS",
     "REQUIRED_PAYLOAD_PATHS",
     "selection_prefix_error",
+    "detect_adoptions",
     "managed_area_description",
     "MANIFEST_RELATIVE_PATH",
     "MANIFEST_SOURCE",

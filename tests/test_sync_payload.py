@@ -376,6 +376,103 @@ class SyncPayloadTests(unittest.TestCase):
 
         self.assertTrue((self.repo_root / ".claude/skills/shared-agent-floor/SKILL.md").is_file())
 
+    # --- BL-02: deletion is bounded to the documented ownership boundary -------------
+
+    def test_downstream_authored_claude_content_is_not_deletable(self) -> None:
+        """`.claude/` is not the boundary. README documents shared/** and skills/shared-*/**."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        local = self.repo_root / ".claude/local/custom.md"
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_text("downstream authored", encoding="utf-8")
+        own_skill = self.repo_root / ".claude/skills/local-only/SKILL.md"
+        own_skill.parent.mkdir(parents=True, exist_ok=True)
+        own_skill.write_text("downstream skill", encoding="utf-8")
+        self.write_manifest_files([".claude/local/custom.md", ".claude/skills/local-only/SKILL.md"])
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertEqual(local.read_text(encoding="utf-8"), "downstream authored")
+        self.assertEqual(own_skill.read_text(encoding="utf-8"), "downstream skill")
+
+    def test_stale_file_inside_the_boundary_is_still_deleted(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        stale_shared = self.repo_root / ".claude/shared/legacy/old.md"
+        stale_shared.parent.mkdir(parents=True, exist_ok=True)
+        stale_shared.write_text("stale", encoding="utf-8")
+        stale_skill = self.repo_root / ".claude/skills/shared-gone/SKILL.md"
+        stale_skill.parent.mkdir(parents=True, exist_ok=True)
+        stale_skill.write_text("stale", encoding="utf-8")
+        self.write_manifest_files(
+            [".claude/shared/legacy/old.md", ".claude/skills/shared-gone/SKILL.md"]
+        )
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertFalse(stale_shared.exists())
+        self.assertFalse(stale_skill.exists())
+
+    def test_refusing_an_out_of_boundary_entry_stays_non_fatal(self) -> None:
+        """Delivery continues and the manifest self-heals, as for any refused entry."""
+        self.write_payload(".claude/shared/core/engineering.md", "engineering")
+        local = self.repo_root / ".claude/local/custom.md"
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_text("downstream authored", encoding="utf-8")
+        self.write_manifest_files([".claude/local/custom.md"])
+
+        sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertTrue((self.repo_root / ".claude/shared/core/engineering.md").is_file())
+        self.assertNotIn(".claude/local/custom.md", self.read_manifest()["files"])
+
+    # --- BL-01: overwriting inside the boundary is reported, never silent ------------
+
+    def test_overwriting_an_unmanaged_file_is_reported(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "central")
+        squatter = self.repo_root / ".claude/shared/core/engineering.md"
+        squatter.parent.mkdir(parents=True, exist_ok=True)
+        squatter.write_text("authored downstream before we shipped one", encoding="utf-8")
+
+        adopted = sync_payload(self.payload_root, self.repo_root, "v1.0.0")
+
+        self.assertIn(".claude/shared/core/engineering.md", adopted)
+        self.assertEqual(squatter.read_text(encoding="utf-8"), "central")
+
+    def test_updating_a_managed_file_is_not_reported_as_adoption(self) -> None:
+        self.write_payload(".claude/shared/core/engineering.md", "v2")
+        managed = self.repo_root / ".claude/shared/core/engineering.md"
+        managed.parent.mkdir(parents=True, exist_ok=True)
+        managed.write_text("v1", encoding="utf-8")
+        self.write_manifest_files([".claude/shared/core/engineering.md"])
+
+        adopted = sync_payload(self.payload_root, self.repo_root, "v1.1.0")
+
+        self.assertEqual(adopted, [])
+        self.assertEqual(managed.read_text(encoding="utf-8"), "v2")
+
+    def test_re_adoption_after_a_source_change_still_delivers_everything(self) -> None:
+        """The manifest reads as empty, but the files are ours. Delivery must not stop."""
+        import json
+
+        self.write_payload(".claude/shared/core/engineering.md", "v2")
+        self.write_payload(".claude/shared/languages/python.md", "v2")
+        for name in ("core/engineering.md", "languages/python.md"):
+            path = self.repo_root / f".claude/shared/{name}"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("v1", encoding="utf-8")
+        manifest = self.repo_root / MANIFEST_RELATIVE_PATH
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(
+            json.dumps({"schemaVersion": 1, "source": "a-previous-name", "files": []}),
+            encoding="utf-8",
+        )
+
+        adopted = sync_payload(self.payload_root, self.repo_root, "v2.0.0")
+
+        for name in ("core/engineering.md", "languages/python.md"):
+            path = self.repo_root / f".claude/shared/{name}"
+            self.assertEqual(path.read_text(encoding="utf-8"), "v2")
+        self.assertEqual(len(adopted), 2)
+
     @unittest.skipUnless(SYMLINKS_SUPPORTED, "Platform does not permit creating symlinks.")
     def test_symlinked_managed_destination_is_rejected(self) -> None:
         self.write_payload(".claude/shared/core/engineering.md", "engineering")

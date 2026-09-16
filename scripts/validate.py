@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from sync_payload import (
-    MANAGED_ROOTS,
+    MANAGED_AREAS,
     REQUIRED_PAYLOAD_PATHS,
     managed_area_description,
     selection_prefix_error,
@@ -234,8 +234,9 @@ def validate_payload(payload_root: Path) -> list[str]:
             errors.append(f"Forbidden secret-like file detected in payload: {path.relative_to(payload_root)}")
 
         if path.is_file():
-            first_component = path.relative_to(payload_root).parts[0]
-            if first_component not in MANAGED_ROOTS:
+            from sync_payload import _is_within_managed_area
+
+            if not _is_within_managed_area(path.relative_to(payload_root)):
                 errors.append(
                     f"Payload content must live under {managed_area_description()}: "
                     f"{path.relative_to(payload_root).as_posix()}"

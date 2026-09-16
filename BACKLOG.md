@@ -46,29 +46,7 @@ needs re-verification before work).
 
 ## Downstream safety
 
-### BL-01 — `copy_payload` overwrites unmanaged downstream files · `fix` · T3 · **hazard**
 
-The copy-side twin of the deletion hole closed in `744d8d2`. `shutil.copy2` runs unconditionally
-with no check that the destination pre-existed unmanaged.
-
-- **Evidence:** `grep -n "shutil.copy2" scripts/sync_payload.py` → `shutil.copy2(source, destination)`, as of `b14d7fa`. Reproduced in review: a downstream-authored file inside a skill directory was replaced with no warning.
-- **Why it matters:** the payload now ships generically-named files (`roles.md`, `checks.md`) inside skill directories, which makes the collision realistic rather than theoretical.
-- **Done when:** an unmanaged downstream file at a payload destination is not silently replaced, **and** a file already recorded in the previous manifest still updates, **and** a first sync after a `source` change still re-adopts every payload file, **and** `tests/test_downstream_safety.py` passes unchanged.
-- **Depends on:** coupled with BL-02 — these are the copy and delete halves of one ownership boundary. Fixing either alone leaves the halves inconsistent.
-- **Found by:** Diff seat, profiles review. **First seen:** 2026-09-15.
-- **Status:** open
-
-### BL-02 — `MANAGED_ROOTS` is broader than the documented ownership boundary · `fix` · T3 · **hazard**
-
-Deletion is bounded to `.claude/`, but `README.md` documents the boundary as `.claude/shared/**`,
-`.claude/skills/shared-*/**` and the manifest. A manifest naming downstream-authored `.claude`
-content still deletes it.
-
-- **Evidence:** `grep -n "MANAGED_ROOTS = " scripts/sync_payload.py` → `MANAGED_ROOTS = (".claude",)`; compare `README.md` "Ownership boundary". As of `b14d7fa`.
-- **Done when:** a manifest naming downstream-authored content inside `.claude/` but outside the documented boundary is refused, **and** legitimate stale cleanup inside the boundary still works, **and** the refusal is non-fatal per the existing skip-and-warn behaviour.
-- **Depends on:** BL-01.
-- **Found by:** Downstream advocate, deletion-bounds review. **First seen:** 2026-09-06.
-- **Status:** open
 
 ### BL-03 — a repository that gitignores `.claude/` is reported as a success while receiving nothing · `fix` · T3
 
@@ -174,6 +152,32 @@ untested everywhere, including on the Linux CI runner.
 ## Closed
 
 Closed and declined entries move here with their evidence or reason.
+
+### BL-02 — `MANAGED_ROOTS` is broader than the documented ownership boundary · `fix` · T3 · **hazard**
+
+Deletion is bounded to `.claude/`, but `README.md` documents the boundary as `.claude/shared/**`,
+`.claude/skills/shared-*/**` and the manifest. A manifest naming downstream-authored `.claude`
+content still deletes it.
+
+- **Evidence:** `grep -n "MANAGED_ROOTS = " scripts/sync_payload.py` → `MANAGED_ROOTS = (".claude",)`; compare `README.md` "Ownership boundary". As of `b14d7fa`.
+- **Done when:** a manifest naming downstream-authored content inside `.claude/` but outside the documented boundary is refused, **and** legitimate stale cleanup inside the boundary still works, **and** the refusal is non-fatal per the existing skip-and-warn behaviour.
+- **Depends on:** BL-01.
+- **Found by:** Downstream advocate, deletion-bounds review. **First seen:** 2026-09-06.
+- **Status:** done — `MANAGED_ROOTS = ('.claude',)` replaced by `MANAGED_AREAS`, the boundary `README.md` documents: `.claude/shared/`, `.claude/skills/shared-*/`, and the manifest. Matching is per path component with `*` allowed within one, so every distributed skill is covered and no locally authored one is. Verified against the real payload: a manifest naming `.claude/local/custom.md` and `.claude/skills/local-only/SKILL.md` deletes neither, while a stale `.claude/shared/legacy/old.md` is still removed and delivery continues.
+
+
+### BL-01 — `copy_payload` overwrites unmanaged downstream files · `fix` · T3 · **hazard**
+
+The copy-side twin of the deletion hole closed in `744d8d2`. `shutil.copy2` runs unconditionally
+with no check that the destination pre-existed unmanaged.
+
+- **Evidence:** `grep -n "shutil.copy2" scripts/sync_payload.py` → `shutil.copy2(source, destination)`, as of `b14d7fa`. Reproduced in review: a downstream-authored file inside a skill directory was replaced with no warning.
+- **Why it matters:** the payload now ships generically-named files (`roles.md`, `checks.md`) inside skill directories, which makes the collision realistic rather than theoretical.
+- **Done when:** an unmanaged downstream file at a payload destination is not silently replaced, **and** a file already recorded in the previous manifest still updates, **and** a first sync after a `source` change still re-adopts every payload file, **and** `tests/test_downstream_safety.py` passes unchanged.
+- **Depends on:** coupled with BL-02 — these are the copy and delete halves of one ownership boundary. Fixing either alone leaves the halves inconsistent.
+- **Found by:** Diff seat, profiles review. **First seen:** 2026-09-15.
+- **Status:** done — overwriting inside the owned area is permitted (that is what ownership means) but never silent: `detect_adoptions` reports every payload destination that already exists downstream and no manifest claimed, and `sync_payload` returns the list and warns per entry. Skipping instead would have broken re-adoption after a `source` change, when the manifest reads as empty and the files are nonetheless ours — covered by `test_re_adoption_after_a_source_change_still_delivers_everything`.
+
 
 ### BL-07 — `app-id:` is deprecated in `create-github-app-token@v3` · `fix` · T3
 
