@@ -93,9 +93,13 @@ The target schema is intentionally small today:
 
 ## Choosing what a repository is sent
 
-This is the **central operator's** control, not the downstream maintainer's. A target
-repository cannot currently decline part of the payload; what it can do is not merge the pull
-request. Wiring a downstream-side opt-out is tracked work.
+This is the **central operator's** control, and deliberately only that. A target repository
+cannot decline part of the payload; what it can do is not merge the pull request, and that
+pull request now states exactly what it would add, change and remove.
+
+Selection has one source of truth: `enabled` and `profile` here, plus the workflow's `targets`
+input for a single run. A downstream-side opt-out file was considered and **declined** — it would
+move the decision about what a repository receives into fifty repositories nobody reviews.
 
 A target with no `profile` receives the whole payload. Naming a profile limits it:
 

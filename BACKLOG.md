@@ -77,17 +77,6 @@ A tag repoint by a third party would reach a workflow holding the token from BL-
 
 
 
-### BL-09 — there is no downstream-side opt-out · `decision` · T3
-
-`profile` is chosen in this repository by the operator. A target repository cannot decline part of
-the payload; its only lever is not merging, and a fresh branch arrives next release.
-
-- **Evidence:** `README.md` "Choosing what a repository is sent" states this explicitly; `grep -n "resolve_selection" scripts/publish.py` shows selection reads nothing from the cloned target. As of `b14d7fa`.
-- **Done when:** the owner records a ruling on whether a target may narrow — never widen — its own selection, for instance via a file in the cloned repository. No implementation is part of this entry.
-- **Found by:** Downstream advocate. **First seen:** 2026-09-15.
-- **Status:** open
-
-
 
 ## The record
 
@@ -126,6 +115,17 @@ untested everywhere, including on the Linux CI runner.
 ## Closed
 
 Closed and declined entries move here with their evidence or reason.
+
+### BL-09 — there is no downstream-side opt-out · `decision` · T3
+
+`profile` is chosen in this repository by the operator. A target repository cannot decline part of
+the payload; its only lever is not merging, and a fresh branch arrives next release.
+
+- **Evidence:** `README.md` "Choosing what a repository is sent" states this explicitly; `grep -n "resolve_selection" scripts/publish.py` shows selection reads nothing from the cloned target. As of `b14d7fa`.
+- **Done when:** the owner records a ruling on whether a target may narrow — never widen — its own selection, for instance via a file in the cloned repository. No implementation is part of this entry.
+- **Found by:** Downstream advocate. **First seen:** 2026-09-15.
+- **Status:** decided — **no.** A target repository may not narrow its own selection. Selection stays wholly in this repository: `enabled` and `profile` in `config/targets.json`, plus the workflow's `targets` input for a single run. The owner's reasoning: one source of truth for what each repository receives. An opt-out file would move that authority into repositories nobody watches, and the drift would arrive silently rather than in review. A target that should not receive something is a `profile` change made here. A downstream maintainer's lever remains declining to merge the pull request — and `BL-08` now makes the pull request say what it would change, which is what makes that lever usable. No implementation follows from this entry; reopening it requires a new entry with a new reason.
+
 
 ### BL-18 — a repository scoped out of successive releases is stranded silently · `fix` · T3
 

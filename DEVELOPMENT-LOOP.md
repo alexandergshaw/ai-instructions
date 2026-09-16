@@ -385,9 +385,12 @@ is never deleted downstream and is absent from the new manifest too, making it p
 to the system. A `source` change therefore needs a one-time deletion reconciliation, not a
 re-adoption plan.
 
-`schemaVersion` is written but never read — `load_previous_manifest` does not inspect it. Treat that
-as a gap rather than as protection: an incompatible future manifest shape will be silently
-mis-parsed rather than rejected.
+`schemaVersion` is read. A manifest declaring a version this code does not understand authorizes no
+deletion — the same footing as a foreign `source` — while delivery still proceeds and the manifest
+is rewritten at the known shape, so the repository self-heals rather than being stranded. Raising
+`MANIFEST_SCHEMA_VERSION` is therefore a one-way door in one direction only: a *newer* central
+repository can still manage a repository holding an older manifest, but an older central repository
+will decline to delete anything in a repository a newer one has already written to.
 
 **Never weaken a safety invariant to make a test pass.** If a test fails against an invariant, the
 change is wrong until proven otherwise. Deleting the test, loosening the assertion, and narrowing
