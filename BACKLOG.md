@@ -211,7 +211,13 @@ the App's full permissions across the whole installation rather than the targets
 - **Why it matters:** `.claude/rules/github-actions.md` requires least privilege, and this token is handed to shell steps.
 - **Done when:** the token is scoped to the enabled targets, **and** a target added to `config/targets.json` does not require a second manual edit to become reachable.
 - **Found by:** External contract seat. **First seen:** 2026-09-15.
-- **Status:** done — the workflow now derives the enabled target list from `config/targets.json` and passes it as `repositories:`, with `permission-contents: write`, `permission-pull-requests: write` and `permission-metadata: read`. Verified the derivation yields `instructions-sync-test` alone, and that an empty list falls back to this repository only, which is the safe failure. `repositories` format confirmed at the action's own `action.yml`: comma or newline-separated.
+- **Correction (2026-09-15):** this closure was premature. It relied on a comment asserting that an empty
+  `repositories` value scopes the token to this repository alone. That is false — the action's README states
+  *"If `owner` is set and `repositories` is empty, access will be scoped to all repositories in the provided
+  repository owner's installation."* An empty list therefore **widened** the token to the whole installation,
+  which is the defect this entry existed to close. Found by two review seats independently; verified at the
+  primary source. `scripts/select_targets.py` now refuses to emit an empty list, and the false comment is gone.
+- **Status:** done — the workflow now derives the target list from `config/targets.json` and passes it as `repositories:`, with `permission-contents: write`, `permission-pull-requests: write` and `permission-metadata: read`. Verified the derivation yields `instructions-sync-test` alone, and that an empty list falls back to this repository only, which is the safe failure. `repositories` format confirmed at the action's own `action.yml`: comma or newline-separated.
 
 
 ### BL-12 — `VERSION` has not moved for a payload that grew substantially · `decision` · T2

@@ -148,6 +148,35 @@ payload directory is renamed, so this check guards releases as well as edits.
 
 `languages` is accepted and validated but does not yet affect distribution.
 
+## Sending a release to some repositories but not others
+
+`enabled` decides whether a repository is ever synced and `profile` decides what it receives.
+Neither scopes a single run — a publish reaches every enabled target.
+
+The **Sync Claude Instructions** workflow takes an optional `targets` input for that:
+
+```text
+targets:  (blank)                              every enabled target
+          instructions-sync-test, python       only those two
+```
+
+Scoping only narrows. A name that is unknown, disabled, or ambiguous between two configured
+owners **fails the run before anything is cloned** — a typo must not quietly turn a fleet-wide
+publish into a no-op. Matching is exact on the repository name or on `owner/name`, never a
+prefix, so `python` does not drag in `python-course`.
+
+The run prints the repositories it will sync and the enabled ones it is deliberately skipping,
+before the first clone.
+
+**The App token scopes to the run, not to the fleet.** `scripts/select_targets.py` computes the
+list once and both the workflow's token step and `publish.py` use it, so a canary run cannot hold
+a credential for the repositories it is not touching. That script refuses to emit an empty list:
+the token action documents that an empty `repositories` with `owner` set grants access to every
+repository in the installation, so an empty value widens scope rather than narrowing it.
+
+A published **release is never scoped** — it reaches every enabled target. Staged rollout is a
+`workflow_dispatch` activity.
+
 ## GitHub App setup
 
 Do not use a PAT. The sync workflow is designed for short-lived GitHub App installation tokens created at runtime.

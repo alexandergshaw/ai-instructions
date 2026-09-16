@@ -13,6 +13,12 @@ on:
       version:
         description: Optional version label to publish
         required: false
+      targets:
+        description: >-
+          Optional comma-separated repositories for this run. Blank sends to every enabled
+          target. A name that is unknown, disabled or ambiguous fails the run before anything
+          is cloned. Scoping only narrows.
+        required: false
 
 concurrency:
   group: publish-claude-instructions
@@ -40,22 +46,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Collect enabled target repositories
+      - name: Resolve the repositories this run may reach
         id: targets
-        run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          with open("config/targets.json", encoding="utf-8") as handle:
-              data = json.load(handle)
-          names = [
-              t["repo"].split("/", 1)[1]
-              for t in data.get("targets", [])
-              if isinstance(t, dict) and isinstance(t.get("repo"), str) and t.get("enabled", True)
-          ]
-          # An empty list would scope the token to this repository alone, which is the safe
-          # failure: publish.py then reports no enabled targets and exits cleanly.
-          print("repositories=" + ",".join(names))
-          PY
+        env:
+          REQUESTED_TARGETS: ${{ inputs.targets }}
+        run: python scripts/select_targets.py >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub App installation token
         id: app-token
@@ -64,8 +59,10 @@ jobs:
           client-id: ${{ vars.CLAUDE_SYNC_APP_CLIENT_ID }}
           owner: ${{ vars.CLAUDE_SYNC_INSTALLATION_OWNER }}
           private-key: ${{ secrets.CLAUDE_SYNC_APP_PRIVATE_KEY }}
-          # Scoped to the enabled targets rather than every repository this owner has.
-          # Derived from config/targets.json so adding a target needs no second edit here.
+          # Scoped to the repositories this run may reach, derived from config/targets.json by
+          # scripts/select_targets.py -- the same filter publish.py uses, so the token can never
+          # be wider than the run. That script refuses to emit an empty list: the action documents
+          # that an empty `repositories` with `owner` set grants access to the whole installation.
           repositories: ${{ steps.targets.outputs.repositories }}
           permission-contents: write
           permission-pull-requests: write
@@ -116,6 +113,7 @@ jobs:
       - name: Publish payload to targets
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REQUESTED_TARGETS: ${{ inputs.targets }}
           SOURCE_VERSION: ${{ steps.version.outputs.value }}
           BOT_NAME: ${{ steps.bot.outputs.name }}
           BOT_EMAIL: ${{ steps.bot.outputs.email }}

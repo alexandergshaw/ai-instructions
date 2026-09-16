@@ -90,7 +90,9 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         # The healthy target must be recorded as a success, not merely attempted: a run that
         # marked every target failed would otherwise satisfy the assertions above.
-        printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list)
+        printed = "\n".join(
+            str(call.args[0]) if call.args else "" for call in mock_print.call_args_list
+        )
         self.assertIn("owner/healthy: ok", printed)
         self.assertIn("Successful targets: 1", printed)
         self.assertIn("Failed targets: 1", printed)

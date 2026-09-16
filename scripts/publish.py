@@ -8,6 +8,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from select_targets import SelectionError, excluded_targets, parse_requested, select_targets
 from sync_payload import MANIFEST_RELATIVE_PATH, SyncError, get_payload_files, load_previous_manifest, sync_payload
 
 REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -342,7 +343,33 @@ def main() -> int:
     source_root = Path(__file__).resolve().parents[1]
     env = require_environment()
     configure_git_transport_auth(env)
-    targets = [target for target in load_targets(source_root / "config" / "targets.json") if target.enabled]
+    config_path = source_root / "config" / "targets.json"
+    try:
+        # Read the configuration once. Deriving the selection from a second, separate read of the
+        # same file is how the run's targets and the token's scope drift apart.
+        configured = load_targets(config_path)
+        config = {
+            "targets": [
+                {"repo": target.repo, "enabled": target.enabled} for target in configured
+            ]
+        }
+        requested = parse_requested(os.environ.get("REQUESTED_TARGETS"))
+        chosen = select_targets(config, requested)
+    except (PublishError, SelectionError, json.JSONDecodeError, OSError) as exc:
+        print(f"ERROR: {exc}")
+        return 1
+
+    chosen_repos = {entry["repo"] for entry in chosen}
+    targets = [target for target in configured if target.enabled and target.repo in chosen_repos]
+
+    # Print the resolved scope before the first clone. An operator must be able to read back what
+    # the run decided, not what they meant.
+    print(f"Scope: {'named targets' if requested else 'every enabled target'}")
+    for target in targets:
+        print(f"  will sync   {target.repo}")
+    for repo in excluded_targets(config, chosen):
+        print(f"  NOT syncing {repo} (enabled, excluded from this run)")
+    print()
     profiles = load_profiles(source_root / "config" / "profiles.json")
 
     if not targets:
